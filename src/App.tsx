@@ -23,7 +23,6 @@ import {
   Sun,
   TimerReset,
   Users,
-  WalletCards,
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -51,7 +50,6 @@ import {
   placeBidFlow,
   readiness,
   redZones,
-  repoRoot,
   rolePaths,
   scenarioFlows,
   theoryTopics,
@@ -63,6 +61,7 @@ import {
 import {
   generatedAt,
   generatedManualCases,
+  projectLabel,
   projectCodeFiles,
   type GeneratedCodeFile,
   type GeneratedManualCase,
@@ -88,7 +87,7 @@ const iconByLane = {
   Client: Code2,
   Socket: Network,
   Service: Layers3,
-  DAO: Database,
+  Repository: Database,
   Realtime: Activity,
 };
 
@@ -105,7 +104,7 @@ const statusClass: Record<StudyStatus, string> = {
 };
 
 const interviewFilters = ["All", "Flow", "Design", "SOLID", "Pattern", "Debug", "Test", "Line code"] as const;
-const flowStepFilters = ["All", "Client", "UI", "Socket", "Protocol", "Service", "DAO", "Realtime", "Test", "Build"] as const;
+const flowStepFilters = ["All", "Client", "UI", "Socket", "Protocol", "Service", "Repository", "Realtime", "Test", "Build"] as const;
 type ThemeMode = "light" | "dark";
 type ScenarioFlowItem = (typeof scenarioFlows)[number];
 type ScenarioStepItem = ScenarioFlowItem["steps"][number];
@@ -114,32 +113,50 @@ export default function LearningApp({ page }: { page: PageKey }) {
   const router = useRouter();
   const [role, setRole] = useState<RoleKey>("Bidder");
   const [query, setQuery] = useState("");
-  const [questionIndex, setQuestionIndex] = useState(0);
+  const [activeQuestionId, setActiveQuestionId] = useState(curatedInterviewQuestions[0]?.id ?? "");
   const [showAnswer, setShowAnswer] = useState(false);
   const [lockMode, setLockMode] = useState<"race" | "locked">("locked");
-  const [scenarioId, setScenarioId] = useState("startup");
-  const [expandedScenarioStep, setExpandedScenarioStep] = useState("startup-server-main");
-  const [theme, setTheme] = useState<ThemeMode>(() => {
-    const savedTheme = localStorage.getItem("btl-viva-theme");
-    return savedTheme === "dark" ? "dark" : "light";
-  });
-  const [checked, setChecked] = useState<Record<string, boolean>>(() => {
-    try {
-      return JSON.parse(localStorage.getItem("btl-viva-progress") ?? "{}");
-    } catch {
-      return {};
-    }
-  });
+  const [scenarioId, setScenarioId] = useState(scenarioFlows[0]?.id ?? "");
+  const [expandedScenarioStep, setExpandedScenarioStep] = useState(scenarioFlows[0]?.steps[0]?.id ?? "");
+  const [theme, setTheme] = useState<ThemeMode>("light");
+  const [checked, setChecked] = useState<Record<string, boolean>>({});
+  const [preferencesReady, setPreferencesReady] = useState(false);
 
   const deferredQuery = useDeferredValue(query.trim().toLowerCase());
   const currentRole = rolePaths.find((item) => item.role === role)!;
-  const currentQuestion = curatedInterviewQuestions[questionIndex] ?? curatedInterviewQuestions[0];
+  const currentQuestion = curatedInterviewQuestions.find((item) => item.id === activeQuestionId) ?? curatedInterviewQuestions[0];
+
+  useEffect(() => {
+    try {
+      const savedTheme = localStorage.getItem("btl-viva-theme");
+      const savedProgress = localStorage.getItem("btl-viva-progress");
+      setTheme(savedTheme === "dark" ? "dark" : "light");
+      setChecked(savedProgress ? JSON.parse(savedProgress) as Record<string, boolean> : {});
+    } catch {
+      setTheme("light");
+      setChecked({});
+    } finally {
+      setPreferencesReady(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!activeQuestionId && curatedInterviewQuestions[0]) {
+      setActiveQuestionId(curatedInterviewQuestions[0].id);
+    }
+  }, [activeQuestionId]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
     document.documentElement.style.colorScheme = theme;
+    if (!preferencesReady) return;
     localStorage.setItem("btl-viva-theme", theme);
-  }, [theme]);
+  }, [preferencesReady, theme]);
+
+  useEffect(() => {
+    if (!preferencesReady) return;
+    localStorage.setItem("btl-viva-progress", JSON.stringify(checked));
+  }, [checked, preferencesReady]);
 
   const filteredFiles = useMemo(() => {
     if (!deferredQuery) return projectCodeFiles;
@@ -169,11 +186,7 @@ export default function LearningApp({ page }: { page: PageKey }) {
   }, [deferredQuery]);
 
   function toggleProgress(id: string) {
-    setChecked((prev) => {
-      const next = { ...prev, [id]: !prev[id] };
-      localStorage.setItem("btl-viva-progress", JSON.stringify(next));
-      return next;
-    });
+    setChecked((prev) => ({ ...prev, [id]: !prev[id] }));
   }
 
   function navigateToPage(nextPage: PageKey) {
@@ -198,7 +211,7 @@ export default function LearningApp({ page }: { page: PageKey }) {
           </div>
           <div>
             <strong>BTL Viva Helper</strong>
-            <span>online-auction-system</span>
+            <span>{projectLabel}</span>
           </div>
         </div>
 
@@ -224,8 +237,8 @@ export default function LearningApp({ page }: { page: PageKey }) {
         </button>
 
         <div className="sidebar-note">
-          <span className="eyebrow">Repo gốc</span>
-          <code>{repoRoot}</code>
+          <span className="eyebrow">Project source</span>
+          <code>{projectLabel}</code>
         </div>
       </aside>
 
@@ -252,8 +265,8 @@ export default function LearningApp({ page }: { page: PageKey }) {
         {page === "interview" && (
           <Interview
             question={currentQuestion}
-            questionIndex={questionIndex}
-            setQuestionIndex={setQuestionIndex}
+            questionId={currentQuestion?.id ?? activeQuestionId}
+            setQuestionId={setActiveQuestionId}
             showAnswer={showAnswer}
             setShowAnswer={setShowAnswer}
             questions={curatedInterviewQuestions}
@@ -324,7 +337,7 @@ function Dashboard({
       };
   const today = [
     { id: "todo-bid", label: "Giải thích PLACE_BID end-to-end", page: "flows" as PageKey },
-    { id: "todo-concurrency", label: "Ôn race condition + transaction rollback", page: "theory" as PageKey },
+    { id: "todo-concurrency", label: "Ôn race condition + anti-sniping", page: "theory" as PageKey },
     { id: "todo-tests", label: "Chạy và đọc BidServiceConcurrencyTest", page: "tests" as PageKey },
     { id: "todo-admin", label: "Tập demo role Admin và authorization", page: "roles" as PageKey },
   ];
@@ -454,7 +467,7 @@ function Roles({
       <SectionHeader
         eyebrow="Role learning paths"
         title="Học theo vai: bidder, seller, admin"
-        text="Mỗi role có quyền, màn hình, message type và test/demo khác nhau. Người học chọn role để nhìn journey end-to-end."
+        text="Mỗi role có quyền, màn hình, Action/Request khác nhau. Người học chọn role để nhìn journey end-to-end."
       />
       <div className="segmented" role="tablist" aria-label="Chọn role">
         {rolePaths.map((path) => (
@@ -524,8 +537,8 @@ function Roles({
 function buildScenarioGuide(flow: ScenarioFlowItem) {
   const moduleLabels: Record<ScenarioStepItem["module"], string> = {
     client: "client/UI",
-    common: "common DTO/protocol",
-    server: "server",
+    common: "common contract/domain",
+    server: "server/service",
   };
   const modules = uniqueSorted(flow.steps.map((step) => moduleLabels[step.module]));
   const fileOrder = flow.steps.map((step) => step.path).filter((path, index, arr) => arr.indexOf(path) === index).slice(0, 7);
@@ -546,17 +559,17 @@ function scenarioInvariants(flow: ScenarioFlowItem) {
     .toLowerCase();
   const invariants: string[] = [];
 
-  if (/bid|wallet|settlement|auto|sniping|auction/.test(haystack)) {
-    invariants.push("Không được để giá, winner, lockedBalance hoặc trạng thái auction lệch nhau.");
+  if (/bid|auto|sniping|auction/.test(haystack)) {
+    invariants.push("Không được để currentPrice, highestBidderId hoặc AuctionStatus lệch nhau sau mỗi thao tác.");
   }
-  if (/auth|login|register|logout|authorization|admin|seller/.test(haystack)) {
-    invariants.push("Client có thể ẩn/hiện menu, nhưng token/role/owner phải được kiểm ở server.");
+  if (/auth|login|register|authorization|admin|seller/.test(haystack)) {
+    invariants.push("Client có thể ẩn/hiện màn, nhưng permission cuối cùng vẫn phải được kiểm ở server.");
   }
   if (/socket|realtime|notification|event|disconnect/.test(haystack)) {
-    invariants.push("Event realtime phải đi sau state hợp lệ và client phải xử lý lỗi/mất kết nối rõ ràng.");
+    invariants.push("Event realtime phải phát sau khi state đã hợp lệ và UI phải cập nhật trên đúng JavaFX thread.");
   }
-  if (/dao|database|sqlite|schema|transaction/.test(haystack)) {
-    invariants.push("DAO chỉ map SQL/persistence; business rule và transaction boundary không được rơi vào UI.");
+  if (/repository|datastore|persistence|serialization|auction_data/.test(haystack)) {
+    invariants.push("Repository/DataStore chỉ là persistence boundary; business rule không được trôi sang UI hoặc common message.");
   }
   if (/maven|ci|test|demo/.test(haystack)) {
     invariants.push("Mọi khẳng định khi demo nên có test, command hoặc manual case làm bằng chứng.");
@@ -594,7 +607,7 @@ function buildStepStudyDetails(step: ScenarioStepItem, flow: ScenarioFlowItem, i
     questions: [
       `Nếu bỏ bước ${step.title} thì flow ${flow.label} hỏng ở đâu?`,
       `Bước này thuộc UX, protocol, business rule hay persistence? Vì sao?`,
-      `Lỗi ở đây sẽ hiện ra UI, response hay database như thế nào?`,
+      "Lỗi ở đây sẽ hiện ra UI, response hay state persistence như thế nào?",
     ],
   };
 }
@@ -602,22 +615,22 @@ function buildStepStudyDetails(step: ScenarioStepItem, flow: ScenarioFlowItem, i
 function layerRuleForStep(step: ScenarioStepItem) {
   const haystack = [step.badge, step.layer, step.path, step.summary].join(" ").toLowerCase();
   if (/fxml|controller|ui|javafx|scene|shell/.test(haystack)) {
-    return "Nhấn mạnh đây là lớp trình bày/điều hướng: validate nhanh và cập nhật UI, nhưng không quyết định rule bảo mật hoặc ghi DB trực tiếp.";
+    return "Nhấn mạnh đây là lớp trình bày/điều hướng: validate nhanh và cập nhật UI, nhưng không quyết định rule auth hay tự sửa persistence.";
   }
-  if (/dto|protocol|message|request|response/.test(haystack)) {
-    return "Nhấn mạnh đây là contract: client và server phải cùng hiểu field, MessageType và format JSON.";
+  if (/protocol|message|request|response|contract|action/.test(haystack)) {
+    return "Nhấn mạnh đây là contract chung: client và server phải cùng hiểu Action, payload Serializable và response wrapper.";
   }
-  if (/router|handler|session|auth/.test(haystack)) {
-    return "Nhấn mạnh đây là cổng server: kiểm token/role, parse payload và chỉ dispatch khi request hợp lệ.";
+  if (/router|handler|auth/.test(haystack)) {
+    return "Nhấn mạnh đây là cổng server: ép kiểu payload, kiểm boundary và chỉ dispatch khi request hợp lệ.";
   }
   if (/service|rule|lock|scheduler|factory/.test(haystack)) {
-    return "Nhấn mạnh đây là nơi business rule sống: kiểm invariant, transaction, concurrency và gọi DAO/helper đúng thứ tự.";
+    return "Nhấn mạnh đây là nơi business rule sống: giữ invariant, concurrency, scheduling và orchestration đúng thứ tự.";
   }
-  if (/dao|sql|schema|sqlite|database/.test(haystack)) {
-    return "Nhấn mạnh đây là persistence boundary: SQL/mapping phải đúng, nhưng không tự quyết định rule nghiệp vụ.";
+  if (/repository|datastore|serialization|persistence/.test(haystack)) {
+    return "Nhấn mạnh đây là persistence boundary: đọc/ghi snapshot hoặc entity đúng cách, nhưng không tự sinh business rule.";
   }
   if (/event|notification|realtime|socket/.test(haystack)) {
-    return "Nhấn mạnh event/socket chỉ phát sau khi state hợp lệ, và client cần cập nhật UI trên đúng thread.";
+    return "Nhấn mạnh socket/event chỉ phát sau khi state đã hợp lệ, và client phải phản ánh kết quả trên đúng thread UI.";
   }
   if (/test|ci|maven|pom/.test(haystack)) {
     return "Nhấn mạnh đây là bằng chứng chất lượng: command/test chứng minh flow không chỉ chạy bằng cảm tính.";
@@ -628,11 +641,11 @@ function layerRuleForStep(step: ScenarioStepItem) {
 function proofForStep(step: ScenarioStepItem) {
   const haystack = [step.badge, step.layer, step.path, step.summary].join(" ").toLowerCase();
   if (/test/.test(haystack)) return `Automated test: mở ${step.path} và đọc Arrange-Act-Assert.`;
-  if (/dao|sql|schema|sqlite/.test(haystack)) return "Bằng chứng: DAO test hoặc dữ liệu SQLite sau thao tác phải khớp DTO/UI.";
-  if (/service|lock|transaction|scheduler|wallet|bid/.test(haystack)) return "Bằng chứng: service test/concurrency test/transaction test hoặc demo nhiều client.";
-  if (/socket|handler|router|protocol|dto/.test(haystack)) return "Bằng chứng: request/response có MessageType đúng và server log vào handler đúng.";
+  if (/repository|datastore|serialization/.test(haystack)) return "Bằng chứng: repository test hoặc snapshot DataStore phản ánh đúng entity/state sau thao tác.";
+  if (/service|lock|scheduler|bid|auth/.test(haystack)) return "Bằng chứng: service test, concurrency test hoặc demo nhiều client đi qua đúng business rule.";
+  if (/socket|handler|router|protocol|message|request|response/.test(haystack)) return "Bằng chứng: request/response bám đúng Action và server đi vào đúng branch của ClientHandler.";
   if (/fxml|controller|ui|javafx/.test(haystack)) return "Bằng chứng: click UI tạo đúng request và notification/state hiển thị đúng.";
-  if (/maven|pom|ci/.test(haystack)) return "Bằng chứng: `mvn clean verify` hoặc workflow CI pass.";
+  if (/maven|pom|ci/.test(haystack)) return "Bằng chứng: `mvn clean install` hoặc workflow build pass.";
   return "Bằng chứng: mở line refs trong Code map và chạy manual case tương ứng.";
 }
 
@@ -668,8 +681,8 @@ function Visualize({
     const needle = flowFilter.toLowerCase();
     return selectedScenario.steps.filter((step) => {
       const haystack = [step.badge, step.layer, step.role, step.path, step.title, step.summary].join(" ").toLowerCase();
-      if (flowFilter === "Build") return /maven|pom|ci|workflow|build|command|properties|schema|sql/.test(haystack);
-      if (flowFilter === "UI") return /ui|fxml|controller|css|shell|scene|motion|toast|javafx/.test(haystack);
+      if (flowFilter === "Build") return /maven|pom|ci|workflow|build|command|properties|wrapper/.test(haystack);
+      if (flowFilter === "UI") return /ui|fxml|controller|css|shell|scene|javafx/.test(haystack);
       return haystack.includes(needle);
     });
   }, [flowFilter, selectedScenario.steps]);
@@ -679,14 +692,14 @@ function Visualize({
       <SectionHeader
         eyebrow="Visual lab"
         title="Component visualize để nhìn cơ chế chạy"
-        text="Các sơ đồ này biến phần dễ nói mơ hồ như socket, lock, scheduler, transaction, Maven thành hình ảnh có thể chỉ tay giải thích."
+        text="Các sơ đồ này biến phần dễ nói mơ hồ như socket, serialization, lock, scheduler và observer thành hình ảnh có thể chỉ tay giải thích."
       />
 
       <div className="panel scenario-panel">
         <div className="panel-title">
           <div>
             <h3>Scenario flow deck</h3>
-            <span>tham khảo style học theo luồng: bước to file to code to liên kết</span>
+            <span>Học theo từng flow: từ màn hình, class xử lý đến bằng chứng test.</span>
           </div>
         </div>
         <div className="segmented scenario-tabs" role="tablist" aria-label="Chọn scenario flow">
@@ -724,16 +737,14 @@ function Visualize({
         </div>
         <div className="coverage-checklist">
           {[
-            "Auth/register/logout",
-            "Bidder bid, auto-bid, anti-sniping",
-            "Seller create/update/dashboard",
-            "Admin user/auction",
-            "Wallet/settlement",
-            "Realtime/socket/disconnect",
-            "End notifications winner/outbid",
-            "Database/DAO",
-            "Maven/CI/Java 25",
-            "UI polish/toast/UiMotion",
+            "Register/login theo contract chung",
+            "Place bid, auto-bid, anti-sniping",
+            "Seller create item -> auto-create auction",
+            "Admin ban/unban/cancel auction",
+            "Observer + server push realtime",
+            "DataStore + repository persistence",
+            "Maven multi-module + wrapper build",
+            "FXML/controller -> NetworkClient -> ClientHandler",
           ].map((item) => (
             <span key={item}><CheckCircle2 size={14} aria-hidden />{item}</span>
           ))}
@@ -993,8 +1004,8 @@ function DatabaseDiagram() {
   return (
     <div className="panel">
       <div className="panel-title">
-        <h3>ERD + table inspector</h3>
-        <span>SQLite server-side</span>
+        <h3>Persistence map</h3>
+        <span>DataStore + serialized snapshot</span>
       </div>
       <div className="erd-grid">
         {dbTables.map((table) => (
@@ -1007,7 +1018,7 @@ function DatabaseDiagram() {
         ))}
       </div>
       <p className="hint">
-        Quan hệ chính: users to items/auctions/bids, items to auctions, auctions to bids/auto_bids.
+        Snapshot chính: users, items, auctions và bidTransactions được giữ trong RAM rồi save xuống `data/auction_data.dat`.
       </p>
     </div>
   );
@@ -1018,28 +1029,28 @@ function SocketInspector() {
     <div className="panel">
       <div className="panel-title">
         <h3>Socket message inspector</h3>
-        <span>newline JSON</span>
+        <span>Java Serialization</span>
       </div>
       <div className="code-sample">
-        <pre>{`Request
-{
-  "type": "PLACE_BID",
-  "token": "session-token",
-  "payload": { "auctionId": 42, "amount": 150.0 }
-}
+        <pre>{`Client -> Server
+new ClientRequest(
+  Action.PLACE_BID,
+  new PlaceBidRequest(auctionId, bidderId, amount, false)
+)
 
-Response
-{
-  "success": true,
-  "message": "Bid placed",
-  "payload": { "currentPrice": 150.0 }
-}
+Server -> Client
+new ClientResponse(
+  true,
+  "Đặt giá thành công",
+  BidTransaction
+)
 
-Event
-{
-  "type": "BID_UPDATE",
-  "payload": { "auctionId": 42, "bidder": "linh" }
-}`}</pre>
+Server Push
+new ServerPushMessage(
+  PushType.NEW_BID,
+  "Current price changed",
+  Auction
+)`}</pre>
       </div>
     </div>
   );
@@ -1083,7 +1094,7 @@ function SchedulerReplay() {
     <div className="panel">
       <div className="panel-title">
         <h3>Scheduler replay</h3>
-        <span>close + retry</span>
+        <span>start / end / extend</span>
       </div>
       <ResponsiveContainer width="100%" height={220}>
         <LineChart data={data}>
@@ -1098,7 +1109,7 @@ function SchedulerReplay() {
           <Line type="monotone" dataKey="closed" stroke="var(--green)" strokeWidth={2} />
         </LineChart>
       </ResponsiveContainer>
-      <p className="hint">Ý cần nói: scheduler chạy server-side, retry settlement phải idempotent.</p>
+      <p className="hint">Ý cần nói: scheduler chạy server-side và anti-sniping reschedule end task khi bid tới sát giờ đóng.</p>
     </div>
   );
 }
@@ -1128,10 +1139,10 @@ function CodeMap({
         if (layerFilter !== "all" && file.layer !== layerFilter) return false;
         if (extensionFilter !== "all" && file.extension !== extensionFilter) return false;
         if (scopeFilter === "source" && !file.path.includes("/src/main/java/")) return false;
-        if (scopeFilter === "ui" && !/(controller|resources\/fxml|resources\/css|client\/src\/main)/.test(file.path)) return false;
+        if (scopeFilter === "ui" && !/(controller|resources\/view|resources\/css|client\/src\/main)/.test(file.path)) return false;
         if (scopeFilter === "tests" && !file.path.includes("/src/test/")) return false;
-        if (scopeFilter === "docs" && !file.path.startsWith("docs/")) return false;
-        if (scopeFilter === "build" && !/(pom\.xml|\.github|\.properties|\.sql|logback\.xml)/.test(file.path)) return false;
+        if (scopeFilter === "docs" && !(/^(docs\/|README\.md$|DESIGN\.md$)/.test(file.path))) return false;
+        if (scopeFilter === "build" && !/(pom\.xml|\.github|\.properties|mvnw|mvnw\.cmd)/.test(file.path)) return false;
         return true;
       }),
     [extensionFilter, files, layerFilter, moduleFilter, scopeFilter],
@@ -1149,12 +1160,12 @@ function CodeMap({
       <SectionHeader
         eyebrow="Code map"
         title="Toàn bộ code map sinh từ thư mục project"
-        text={`Đang hiển thị ${visibleFiles.length}/${projectCodeFiles.length} file có nghĩa trong repo, gồm Java, FXML, CSS, Maven, SQL, docs và test. Mỗi file có line refs để mở đúng dòng khi vấn đáp.`}
+        text={`Đang hiển thị ${visibleFiles.length}/${projectCodeFiles.length} file có nghĩa trong repo, gồm Java, FXML, CSS, Maven, docs, test và contract common. Mỗi file có line refs để mở đúng dòng khi vấn đáp.`}
       />
       <label className="wide-search">
         <Search size={18} aria-hidden />
         <span>Tìm trong code map</span>
-        <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Ví dụ: DAO, BidService, Authorization" />
+        <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Ví dụ: BidService, serialization, AuctionScheduler" />
       </label>
 
       <div className="panel code-filter-panel">
@@ -1194,7 +1205,7 @@ function CodeMap({
             ["ui", "Client UI"],
             ["tests", "Tests"],
             ["docs", "Docs"],
-            ["build", "Build/DB/CI"],
+            ["build", "Build/Maven/CI"],
           ].map(([value, label]) => (
             <button
               key={value}
@@ -1316,32 +1327,32 @@ function buildFileStudyGuide(file: GeneratedCodeFile) {
     ),
   ).slice(0, 5);
 
-  if (base === "UiMotion.java") {
+  if (base === "NetworkClient.java") {
     return {
-      role: "Tách toàn bộ micro-animation của button ra khỏi controller, được SceneManager cài sau khi load FXML.",
-      viva: "Nói rõ helper chỉ thay đổi style/effect/scale cho hover, press và focus-visible; không thay onAction nên không ảnh hưởng nghiệp vụ.",
-      risk: "Animation bám trạng thái, làm nút khó bấm hoặc vô tình phá handler nếu code can thiệp event không đúng.",
-      checklist: ["Mở SceneManager để chỉ nơi gọi UiMotion.", "Mở common.css/shell.css để chỉ class button được polish.", "Nhấn mạnh đây là UI polish, không phải business rule."],
+      role: "Singleton network layer giữ socket, responseQueue và push listener cho toàn bộ JavaFX client.",
+      viva: "Nói rõ vì sao cùng một ObjectInputStream phải tách ClientResponse và ServerPushMessage bằng listener thread.",
+      risk: "Một lỗi ở đây có thể làm cả request/response lẫn realtime push hỏng cùng lúc.",
+      checklist: ["Chỉ connect().", "Chỉ sendRequest/sendRequestAsync.", "Chỉ listenForServerMessages và responseQueue."],
       related,
     };
   }
 
-  if (base === "NotificationManager.java") {
+  if (base === "ClientHandler.java") {
     return {
-      role: "Điểm tập trung hiển thị toast trong app và biến event realtime thành feedback người dùng.",
-      viva: "Nối từ SYSTEM_NOTIFICATION/BID_UPDATE/TIME_EXTENDED/AUCTION_CLOSED tới toastHost trong AppShellController.",
-      risk: "Server xử lý đúng nhưng user không thấy thông báo, hoặc cập nhật UI sai thread gây lỗi JavaFX.",
-      checklist: ["Chỉ ra listener event socket.", "Chỉ ra Platform.runLater/UI thread.", "Chỉ ra toast có progress line và xếp chồng."],
+      role: "Socket boundary phía server: ép kiểu ClientRequest, switch theo Action và dispatch sang đúng service.",
+      viva: "Khi mở file này, nói branch action nào sẽ đi tới UserService, ItemService, AuctionService, BidService hoặc AutoBidService.",
+      risk: "Payload check sai hoặc dispatch nhầm branch sẽ làm cả flow đúng contract nhưng sai business behavior.",
+      checklist: ["Chỉ switch(action).", "Chỉ payload type-check.", "Nối sang service kế tiếp."],
       related,
     };
   }
 
   if (file.layer === "JavaFX Controller") {
     return {
-      role: `Controller nhận thao tác của màn ${base.replace("Controller.java", "")}, validate nhanh và gọi client service.`,
-      viva: `Bắt đầu từ FXML onAction/fx:id, rồi nói các method chính ${anchors.join(", ") || "initialize/handler"} gọi service nào.`,
+      role: `Controller nhận thao tác của màn ${base.replace("Controller.java", "")}, validate nhanh và tạo request hoặc điều hướng UI.`,
+      viva: `Bắt đầu từ FXML onAction/fx:id, rồi nói các method chính ${anchors.join(", ") || "initialize/handler"} tạo Action nào hoặc load scene nào.`,
       risk: "UI có thể không phản hồi, gửi request sai payload hoặc cập nhật JavaFX state sai thread.",
-      checklist: ["Nêu input người dùng.", "Nêu client service/socket được gọi.", "Nêu response/event cập nhật view ra sao."],
+      checklist: ["Nêu input người dùng.", "Nêu NetworkClient/FXMLLoader được gọi.", "Nêu response/event cập nhật view ra sao."],
       related,
     };
   }
@@ -1358,30 +1369,30 @@ function buildFileStudyGuide(file: GeneratedCodeFile) {
 
   if (file.layer.includes("Service")) {
     return {
-      role: "Nơi xử lý rule nghiệp vụ, transaction, lock, notification hoặc orchestration giữa DAO/service khác.",
+      role: "Nơi xử lý rule nghiệp vụ, lock, scheduler, observer hoặc orchestration giữa repository/service khác.",
       viva: `Nói invariant file bảo vệ và method chính ${anchors.join(", ") || "được line refs liệt kê"}.`,
-      risk: "Business rule bị phá: bid sai, quyền sai, ví sai, trạng thái auction sai hoặc event gửi nhầm.",
-      checklist: ["Nêu input từ handler.", "Nêu DAO/service được gọi.", "Nêu test bảo vệ behavior."],
+      risk: "Business rule bị phá: auth sai, bid sai, status auction sai hoặc event phát sai thời điểm.",
+      checklist: ["Nêu input từ handler.", "Nêu repository/service được gọi.", "Nêu test bảo vệ behavior."],
       related,
     };
   }
 
-  if (file.layer.includes("DAO") || file.layer.includes("SQLite")) {
+  if (file.layer.includes("Repository") || file.layer.includes("Data Store")) {
     return {
-      role: "Boundary persistence: map giữa domain/DTO và SQLite query/update.",
-      viva: "Nói bảng/cột liên quan, query chính và vì sao service không viết SQL trực tiếp.",
-      risk: "Dữ liệu DB sai, mapping lệch DTO/model hoặc transaction rollback không đúng.",
-      checklist: ["Nêu table tác động.", "Nêu method query/update.", "Nêu DAO test tương ứng."],
+      role: "Boundary persistence: đọc/ghi entity và snapshot DataStore thay vì để service chạm list/file trực tiếp.",
+      viva: "Nói repository hoặc DataStore này bảo vệ danh sách nào và vì sao service không chạm persistence root trực tiếp.",
+      risk: "State persistence sai, save/load snapshot lệch hoặc repository update không đồng bộ với business flow.",
+      checklist: ["Nêu entity bị tác động.", "Nêu method save/find/update chính.", "Nêu repository/data store test tương ứng."],
       related,
     };
   }
 
-  if (file.layer.includes("Socket") || file.layer.includes("Handler") || file.layer === "Protocol") {
+  if (file.layer.includes("Socket") || file.layer.includes("Handler") || file.layer === "Message Contract") {
     return {
-      role: "Boundary client-server: nhận/gửi MessageType, Request/Response hoặc event realtime.",
-      viva: "Nói message type, token/session, payload DTO và handler/service kế tiếp.",
+      role: "Boundary client-server: nhận/gửi Action, Request/Response hoặc event realtime.",
+      viva: "Nói Action, payload Serializable và handler/service kế tiếp.",
       risk: "Client/server lệch contract, route nhầm quyền hoặc event không tới subscriber.",
-      checklist: ["Nêu MessageType.", "Nêu DTO payload.", "Nêu role/session check nếu có."],
+      checklist: ["Nêu Action hoặc PushType.", "Nêu payload/request wrapper.", "Nêu branch/service kế tiếp."],
       related,
     };
   }
@@ -1471,7 +1482,7 @@ function Theory({ topics }: { topics: typeof theoryTopics }) {
       <SectionHeader
         eyebrow="Theory library"
         title="Lý thuyết gắn trực tiếp vào repo"
-        text="Không học khái niệm rời rạc. Mỗi thẻ cho biết định nghĩa, ví dụ trong online-auction-system, file cần mở và link đọc thêm."
+        text={`Không học khái niệm rời rạc. Mỗi thẻ cho biết định nghĩa, ví dụ trong ${projectLabel}, file cần mở và link đọc thêm.`}
       />
       {Object.entries(grouped).map(([category, items]) => (
         <div key={category} className="theory-group">
@@ -1594,15 +1605,15 @@ function Tests({
 
 function Interview({
   question,
-  questionIndex,
-  setQuestionIndex,
+  questionId,
+  setQuestionId,
   showAnswer,
   setShowAnswer,
   questions,
 }: {
   question: CuratedInterviewQuestion;
-  questionIndex: number;
-  setQuestionIndex: (index: number) => void;
+  questionId: string;
+  setQuestionId: (id: string) => void;
   showAnswer: boolean;
   setShowAnswer: (value: boolean) => void;
   questions: CuratedInterviewQuestion[];
@@ -1640,20 +1651,25 @@ function Interview({
   const visibleQuestionButtons = useMemo(() => {
     return filteredQuestions;
   }, [filteredQuestions]);
+  const activeFilteredIndex = useMemo(
+    () => filteredQuestions.findIndex((item) => item.id === questionId),
+    [filteredQuestions, questionId],
+  );
+  const activeFilteredPosition = activeFilteredIndex >= 0 ? activeFilteredIndex + 1 : 0;
 
   useEffect(() => {
     if (!filteredQuestions.length) return;
     if (filteredQuestions.some((item) => item.id === question.id)) return;
-    const nextIndex = questions.findIndex((item) => item.id === filteredQuestions[0].id);
-    if (nextIndex >= 0) {
-      setQuestionIndex(nextIndex);
-      setShowAnswer(false);
-    }
-  }, [filteredQuestions, question.id, questions, setQuestionIndex, setShowAnswer]);
+    setQuestionId(filteredQuestions[0].id);
+    setShowAnswer(false);
+  }, [filteredQuestions, question.id, setQuestionId, setShowAnswer]);
 
   function nextQuestion(delta: number) {
-    const next = (questionIndex + delta + questions.length) % questions.length;
-    setQuestionIndex(next);
+    if (!filteredQuestions.length) return;
+    const currentIndex = filteredQuestions.findIndex((item) => item.id === questionId);
+    const baseIndex = currentIndex >= 0 ? currentIndex : 0;
+    const next = (baseIndex + delta + filteredQuestions.length) % filteredQuestions.length;
+    setQuestionId(filteredQuestions[next]?.id ?? filteredQuestions[0].id);
     setShowAnswer(false);
   }
 
@@ -1760,7 +1776,7 @@ function Interview({
         <div className="panel">
           <div className="panel-title">
             <h3>Follow-up</h3>
-            <span>{questionIndex + 1}/{questions.length}</span>
+            <span>{activeFilteredPosition}/{filteredQuestions.length || questions.length}</span>
           </div>
           <ul className="clean-list">
             {question.followUps.map((item) => (
@@ -1776,7 +1792,7 @@ function Interview({
             <input
               value={bankQuery}
               onChange={(event) => setBankQuery(event.target.value)}
-              placeholder="Lọc 300 câu theo file/topic..."
+              placeholder="Lọc câu theo file/topic/line code..."
             />
           </label>
           <div className="interview-filter-bar" aria-label="Lọc nhóm câu hỏi vấn đáp">
@@ -1792,27 +1808,24 @@ function Interview({
             ))}
           </div>
           <div className="question-jump">
-            {visibleQuestionButtons.map((item) => {
-              const originalIndex = questions.findIndex((questionItem) => questionItem.id === item.id);
-              return (
+            {visibleQuestionButtons.map((item, index) => (
               <button
                 key={item.id}
-                className={originalIndex === questionIndex ? "active" : ""}
+                className={item.id === questionId ? "active" : ""}
                 type="button"
                 onClick={() => {
-                  setQuestionIndex(originalIndex);
+                  setQuestionId(item.id);
                   setShowAnswer(false);
                 }}
-                aria-label={`Mở câu hỏi ${originalIndex + 1}`}
+                aria-label={`Mở câu hỏi ${index + 1} trong tập đã lọc`}
               >
-                {originalIndex + 1}
+                {index + 1}
               </button>
-              );
-            })}
+            ))}
           </div>
           <p className="hint question-hint">
-            Đang hiện {visibleQuestionButtons.length}/{filteredQuestions.length} câu phù hợp
-            {activeFilter === "All" && !deferredBankQuery ? ` trên tổng ${questions.length} câu.` : ". Gõ tên file, topic hoặc line code để lọc hẹp hơn."}
+            Đang hiện {visibleQuestionButtons.length} câu trong tập đã lọc
+            {activeFilter === "All" && !deferredBankQuery ? ` trên tổng ${questions.length} câu.` : `. Tổng ngân hàng hiện có ${questions.length} câu.`}
           </p>
         </div>
       </div>

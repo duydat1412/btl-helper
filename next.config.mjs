@@ -2,9 +2,6 @@
 const nextConfig = {
   reactStrictMode: true,
   productionBrowserSourceMaps: false,
-  typescript: {
-    ignoreBuildErrors: true,
-  },
   experimental: {
     serverSourceMaps: false,
     webpackMemoryOptimizations: true,

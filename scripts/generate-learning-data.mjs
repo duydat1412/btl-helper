@@ -1,43 +1,93 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
-const repoRoot = "D:\\Code\\java\\online-auction-system";
+const cliArgs = parseArgs(process.argv.slice(2));
+const repoRoot = path.resolve(cliArgs["repo-root"] ?? process.env.LEARNING_REPO_ROOT ?? "D:\\BTL");
+const projectLabel = cliArgs["project-label"] ?? process.env.LEARNING_PROJECT_LABEL ?? "BTL";
 const outFile = path.resolve("src/generatedProjectData.ts");
 
 const excludedDirs = new Set([
   ".git",
-  ".gitnexus",
   ".agents",
   ".claude",
+  ".codex",
   ".gemini",
-  "target",
-  "uploads",
+  ".worktrees",
+  ".venv",
   ".idea",
   ".vscode",
+  ".next",
+  "node_modules",
+  "target",
+  "dist",
+  "build",
+  "out",
+  "data",
 ]);
+
 const includedExtensions = new Set([
   ".java",
   ".fxml",
   ".css",
   ".xml",
   ".properties",
-  ".sql",
   ".md",
   ".json",
   ".yml",
   ".yaml",
+  ".cmd",
+  ".sh",
 ]);
+
+const includedBasenames = new Set([
+  "pom.xml",
+  "mvnw",
+  "mvnw.cmd",
+  "README.md",
+  "DESIGN.md",
+]);
+
+function parseArgs(args) {
+  const parsed = {};
+  for (let index = 0; index < args.length; index += 1) {
+    const token = args[index];
+    if (!token.startsWith("--")) continue;
+    const key = token.slice(2);
+    const next = args[index + 1];
+    if (next && !next.startsWith("--")) {
+      parsed[key] = next;
+      index += 1;
+    } else {
+      parsed[key] = "true";
+    }
+  }
+  return parsed;
+}
 
 function walk(dir) {
   const entries = readdirSync(dir, { withFileTypes: true });
   return entries.flatMap((entry) => {
+    if (excludedDirs.has(entry.name)) return [];
     const fullPath = path.join(dir, entry.name);
     if (entry.isDirectory()) {
-      if (excludedDirs.has(entry.name)) return [];
       return walk(fullPath);
     }
     const ext = path.extname(entry.name).toLowerCase();
-    if (!includedExtensions.has(ext)) return [];
+    if (includedBasenames.has(entry.name) || includedExtensions.has(ext)) {
+      return [fullPath];
+    }
+    return [];
+  });
+}
+
+function walkAll(dir) {
+  const entries = readdirSync(dir, { withFileTypes: true });
+  return entries.flatMap((entry) => {
+    if (excludedDirs.has(entry.name)) return [];
+    const fullPath = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      return walkAll(fullPath);
+    }
     return [fullPath];
   });
 }
@@ -46,1235 +96,1023 @@ function rel(fullPath) {
   return path.relative(repoRoot, fullPath).replaceAll(path.sep, "/");
 }
 
-function walkAll(dir) {
-  const entries = readdirSync(dir, { withFileTypes: true });
-  return entries.flatMap((entry) => {
-    const fullPath = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      if (excludedDirs.has(entry.name)) return [];
-      return walkAll(fullPath);
-    }
-    return [fullPath];
-  });
+function moduleFor(relativePath) {
+  if (relativePath.startsWith("auction-client/")) return "auction-client";
+  if (relativePath.startsWith("auction-common/")) return "auction-common";
+  if (relativePath.startsWith("auction-server/")) return "auction-server";
+  if (relativePath.startsWith("docs/")) return "docs";
+  if (relativePath.startsWith(".github/")) return ".github";
+  return "root";
 }
 
 function layerFor(relativePath) {
-  if (relativePath.endsWith("pom.xml")) return "Maven";
-  if (relativePath.startsWith("common/src/main/java")) {
-    if (relativePath.includes("/dto/")) return "Common DTO";
-    if (relativePath.includes("/model/")) return "Common Model";
-    if (relativePath.includes("/protocol/")) return "Protocol";
-    if (relativePath.includes("/enums/")) return "Enum";
-    return "Common";
+  if (relativePath === "pom.xml" || relativePath.endsWith("/pom.xml") || relativePath === "mvnw" || relativePath === "mvnw.cmd") {
+    return "Maven";
   }
-  if (relativePath.startsWith("server/src/main/java")) {
-    if (relativePath.includes("/service/")) return "Server Service";
-    if (relativePath.includes("/dao/sqlite/")) return "SQLite DAO";
-    if (relativePath.includes("/dao/")) return "DAO Interface";
-    if (relativePath.includes("/socket/")) return "Socket/Handler";
-    if (relativePath.includes("/concurrency/")) return "Concurrency";
-    if (relativePath.includes("/exception/")) return "Exception";
-    if (relativePath.includes("/config/")) return "Config";
-    if (relativePath.includes("/factory/")) return "Factory";
-    return "Server";
-  }
-  if (relativePath.startsWith("client/src/main/java")) {
-    if (relativePath.includes("/controller/")) return "JavaFX Controller";
-    if (relativePath.includes("/service/")) return "Client Service";
-    if (relativePath.includes("/socket/")) return "Client Socket";
-    if (relativePath.includes("/util/")) return "Client Utility";
-    return "Client";
-  }
-  if (relativePath.includes("/src/test/")) return "Test";
-  if (relativePath.includes("/resources/fxml/")) return "FXML View";
-  if (relativePath.includes("/resources/css/")) return "CSS";
-  if (relativePath.includes("/resources/db/")) return "Database Script";
+  if (relativePath.startsWith(".github/")) return "CI";
+  if (relativePath.startsWith("docs/") || /(^|\/)(README|DESIGN)\.md$/i.test(relativePath)) return "Documentation";
+  if (relativePath.includes("/src/test/java/")) return "Test";
+  if (relativePath.includes("/src/main/resources/view/")) return "FXML View";
+  if (relativePath.includes("/src/main/resources/css/")) return "CSS";
+  if (relativePath.includes("/controller/")) return "JavaFX Controller";
+  if (relativePath.includes("/network/")) return "Network Client";
+  if (relativePath.includes("/util/")) return "Client Utility";
+  if (relativePath.includes("/message/")) return "Message Contract";
+  if (relativePath.includes("/entity/")) return "Common Entity";
+  if (relativePath.includes("/enums/")) return "Enum";
+  if (relativePath.includes("/factory/")) return "Factory";
+  if (relativePath.includes("/strategy/")) return "Strategy";
+  if (relativePath.includes("/observer/")) return relativePath.startsWith("auction-server/") ? "Server Observer" : "Observer Contract";
+  if (relativePath.includes("/handler/")) return "Socket Handler";
+  if (relativePath.includes("/service/")) return "Server Service";
+  if (relativePath.includes("/repository/")) return "Repository";
+  if (relativePath.includes("/datastore/")) return "Data Store";
+  if (relativePath.includes("/exception/")) return "Exception";
   if (relativePath.includes("/resources/")) return "Resource";
-  if (relativePath.startsWith("docs/")) return "Documentation";
   return "Project File";
 }
 
 function summaryFor(relativePath, layer, lines) {
   const base = path.basename(relativePath);
-  const name = base.replace(/\.(java|fxml|css|xml|properties|sql|md|json|ya?ml)$/i, "");
-  const joined = lines.slice(0, 80).join(" ");
-  if (base === "UiMotion.java") return "Utility cài micro-animation tập trung cho button JavaFX sau khi FXML được load, giúp polish UI mà không đổi onAction/handler.";
-  if (base === "NotificationManager.java") return "Utility hiển thị toast trong cửa sổ app và lắng nghe event realtime để báo lỗi/thành công, time extended, auction closed hoặc system notification.";
-  if (base === "SceneManager.java") return "Utility điều hướng màn hình JavaFX, giữ shell/current user và gọi các hook UI như UiMotion sau khi load FXML.";
-  if (base === "ImageUrlUtil.java") return "Utility chuẩn hóa URL ảnh upload để JavaFX client tải đúng asset từ HTTP asset server.";
-  if (base === "BidTimeline.java") return "Utility biến lịch sử bid thành dữ liệu timeline/chart để giải thích diễn biến giá realtime.";
-  if (base === "PriceChartManager.java") return "Utility quản lý chart giá trong live bidding, tách render chart khỏi controller nghiệp vụ.";
-  if (base === "AuctionStatusUi.java") return "Utility map AuctionStatus sang label/CSS class nhất quán trên các màn JavaFX.";
-  if (base === "GlobalExceptionHandler.java") return "Utility bắt lỗi bất ngờ phía client để UI không crash im lặng và user có thông báo rõ.";
-  if (base === "FileUtil.java") return "Utility chọn, kiểm tra và chuẩn hóa file ảnh trước khi seller tạo/cập nhật auction.";
-  if (base === "JsonMapper.java" && relativePath.startsWith("client/")) return "Utility Gson phía client để serialize request và convert response/event payload từ socket.";
-  if (base === "JsonMapper.java" && relativePath.startsWith("server/")) return "Utility Gson phía server để parse request socket và serialize response/event thống nhất.";
-  if (layer === "JavaFX Controller") return `Controller JavaFX cho màn ${name.replace("Controller", "")}: nhận event UI, validate input, gọi client service và cập nhật view.`;
-  if (layer === "FXML View") return `FXML khai báo layout, fx:id và onAction cho màn ${name.replace("View", "")}.`;
-  if (layer === "Client Service") return `Service phía client đóng gói request socket cho các controller, không truy cập database.`;
-  if (layer === "Client Socket") return `Lớp socket phía client quản lý kết nối, request/response JSON và event realtime.`;
-  if (layer === "Server Service") return `Service server chứa business rule chính, phối hợp DAO, transaction, lock hoặc notification nếu cần.`;
-  if (layer === "Socket/Handler") return `Handler/router socket nhận MessageType, kiểm session/role và gọi service tương ứng.`;
-  if (layer === "SQLite DAO") return `DAO SQLite map SQL sang model/record và là nơi server đọc/ghi database.`;
-  if (layer === "DAO Interface") return `Interface DAO tách service khỏi cài đặt SQLite cụ thể để dễ test và thay thế.`;
-  if (layer === "Common DTO") return `DTO dùng làm payload giữa client và server qua Gson JSON.`;
-  if (layer === "Common Model") return `Model domain/OOP của hệ thống đấu giá, dùng trong server, common và test.`;
-  if (layer === "Protocol") return `Protocol chung định nghĩa Request/Response/MessageType cho socket JSON.`;
-  if (layer === "Maven") return `Cấu hình Maven cho module, dependency, plugin build/test/checkstyle.`;
-  if (layer === "Test") return `JUnit test kiểm chứng hành vi của ${name}.`;
-  if (layer === "Database Script" || joined.includes("CREATE TABLE")) return `Script database/schema/seed cho SQLite server.`;
-  if (layer === "Documentation") return `Tài liệu dự án hỗ trợ setup, kiến trúc, testing hoặc vấn đáp.`;
-  return `File ${base} thuộc layer ${layer}.`;
+  const name = base.replace(/\.[^.]+$/, "");
+  if (base === "Action.java") return "Enum liệt kê toàn bộ lệnh socket mà client được phép gửi và ClientHandler phải hiểu.";
+  if (base === "ClientRequest.java") return "Wrapper request chuẩn hoá Action + payload Serializable để client gửi sang server qua socket.";
+  if (base === "ClientResponse.java") return "Wrapper response chuẩn hoá success/message/data để mọi action trả về cùng một contract.";
+  if (base === "ServerPushMessage.java") return "Contract realtime để server broadcast NEW_BID, PRICE_UPDATE, AUCTION_STARTED hoặc AUCTION_ENDED tới client.";
+  if (base === "NetworkClient.java") return "Singleton socket client giữ kết nối, tách request/response khỏi server push bằng listener thread và queue.";
+  if (base === "ClientHandler.java") return "Boundary server đọc ClientRequest, switch theo Action và dispatch sang đúng service/repository flow.";
+  if (base === "BidService.java") return "Service đặt giá có per-auction lock, strategy injection và anti-sniping extension ngay trước lúc kết phiên.";
+  if (base === "AuctionScheduler.java") return "Scheduler server-side tự mở/đóng phiên, hỗ trợ anti-sniping bằng cách dời endTime và reschedule task.";
+  if (base === "AutoBidService.java") return "Observer phản ứng với bid mới để kích hoạt AutoBidStrategy và dọn config khi phiên kết thúc hoặc bị hủy.";
+  if (base === "AuctionEventManager.java") return "Publisher trung tâm cho observer flow: bid mới, đổi trạng thái và kết thúc phiên.";
+  if (base === "BroadcastObserver.java") return "Observer bridge giữa event manager và ClientRegistry để mọi client nhận được cập nhật realtime.";
+  if (base === "DataStore.java") return "Singleton in-memory store lưu users/items/auctions/bidTransactions và persist bằng Java Serialization xuống auction_data.dat.";
+  if (base === "UserService.java") return "Service auth xử lý đăng ký, đăng nhập, BCrypt hash/check và quyền admin cho ban/unban.";
+  if (base === "ItemService.java") return "Service CRUD item, dùng ItemFactory để tạo đúng subclass và tự tạo + lên lịch auction khi seller tạo item.";
+  if (base === "AuctionService.java") return "Service tạo, truy vấn và hủy auction; kiểm soát seller/admin flow và nối sang scheduler/event manager.";
+  if (layer === "JavaFX Controller") return `Controller JavaFX cho màn ${name.replace("Controller", "")}: nhận event UI, tạo request hoặc điều hướng theo ClientResponse.`;
+  if (layer === "FXML View") return `FXML định nghĩa layout, fx:id và onAction cho màn ${name.replace(/[_-]/g, " ")}.`;
+  if (layer === "Message Contract") return `Contract dùng chung giữa client và server trong module common; đổi field ở đây sẽ làm cả hai phía phải cập nhật theo.`;
+  if (layer === "Common Entity") return `Entity/domain object dùng chung cho client, server, repository và serialization snapshot.`;
+  if (layer === "Strategy") return `Strategy pattern cho bidding logic hoặc policy biến thiên mà không sửa service gọi bên ngoài.`;
+  if (layer === "Factory") return `Factory tạo object domain đúng subclass để controller/service không phải new thủ công theo từng loại item.`;
+  if (layer === "Socket Handler") return "Điểm vào socket phía server: parse object, validate payload và định tuyến action.";
+  if (layer === "Server Service") return "Service phía server chứa business rule, concurrency rule, scheduling hoặc authorization rule.";
+  if (layer === "Repository") return "Repository boundary truy cập DataStore và cô lập service khỏi chi tiết persistence cụ thể.";
+  if (layer === "Data Store") return "Persistence root quản lý snapshot dữ liệu runtime và default bootstrap state.";
+  if (layer === "Network Client") return "Client-side network layer kết nối tới localhost:8080 và chuyển object qua ObjectOutputStream/ObjectInputStream.";
+  if (layer === "Server Observer") return "Observer server nhận auction events rồi broadcast hoặc kích hoạt luồng phụ như auto-bid.";
+  if (layer === "Test") return `JUnit test chứng minh behavior của ${name} trong các case dễ bị hỏi lúc vấn đáp hoặc demo.`;
+  if (layer === "Maven") return "Maven reactor/build entry mô tả module, dependency và cách chạy build hoặc exec plugin.";
+  if (layer === "Documentation") return "Tài liệu giúp giải thích kiến trúc, contract hoặc cách chạy dự án khi demo và vấn đáp.";
+  const joined = lines.slice(0, 40).join(" ").toLowerCase();
+  if (joined.includes("serialization")) return "File liên quan tới serialization flow của hệ thống đấu giá client-server.";
+  return `File ${base} thuộc layer ${layer} trong repo ${projectLabel}.`;
 }
 
 function lineExplain(code, layer) {
   const trimmed = code.trim();
-  const typeMatch = trimmed.match(/^(?:public\s+)?(?:final\s+|abstract\s+)?(class|interface|enum|record)\s+([A-Za-z_][A-Za-z0-9_]*)/);
-  if (trimmed.startsWith("package ")) return "Khai báo package, giúp xác định module và namespace của class.";
-  if (trimmed.startsWith("import ")) return "Import dependency được file sử dụng; khi vấn đáp có thể hỏi vì sao cần thư viện này.";
+  if (!trimmed) return "Dòng trống hoặc chỉ để tách khối logic.";
+  if (trimmed.startsWith("package ")) return "Xác định module/package thật của file, rất hữu ích khi giảng viên hỏi class này nằm ở phía nào.";
+  if (trimmed.startsWith("import ")) return "Cho thấy file đang phụ thuộc contract, entity hay hạ tầng nào.";
+  const typeMatch = trimmed.match(/(?:class|interface|enum|record)\s+([A-Za-z_][A-Za-z0-9_]*)/);
   if (typeMatch) {
-    const [, kind, name] = typeMatch;
-    if (layer === "JavaFX Controller") return `Khai báo ${kind} ${name}; mở từ đây để nói màn này nhận event UI nào, gọi service nào và cập nhật state ra sao.`;
-    if (layer === "Client Utility") return `Khai báo ${kind} ${name}; mở từ đây để nói utility này tách phần dùng chung khỏi controller và tránh lặp code UI/socket.`;
-    if (layer === "Server Service") return `Khai báo ${kind} ${name}; đây là nơi nói business rule, transaction, lock hoặc notification của server.`;
-    if (layer === "Socket/Handler") return `Khai báo ${kind} ${name}; đây là boundary nhận MessageType, kiểm session/role và gọi service.`;
-    if (layer.includes("DAO")) return `Khai báo ${kind} ${name}; đây là boundary SQL/persistence, map dữ liệu giữa SQLite và domain/DTO.`;
-    if (layer === "Common DTO") return `Khai báo ${kind} ${name}; đây là contract payload client-server qua Gson JSON.`;
-    return `Khai báo ${kind} ${name}; dùng để mở đầu phần trách nhiệm chính của file trong layer ${layer}.`;
+    return `Khai báo ${typeMatch[1]} - đây là điểm mở đầu tốt nhất để nói trách nhiệm chính của file trong layer ${layer}.`;
   }
-  if (/(@FXML|fx:id|onAction)/.test(trimmed)) return "Liên kết JavaFX/FXML giữa view và controller hoặc handler UI.";
-  if (/MessageType\./.test(trimmed)) return "Điểm nối protocol: xác định message client-server đang được gửi hoặc xử lý.";
-  if (/Response\.(ok|error)/.test(trimmed)) return "Tạo response trả về client, gồm trạng thái, message và payload.";
-  if (/sendRequest|connect|Socket|PrintWriter|BufferedReader/.test(trimmed)) return "Liên quan luồng socket client-server và JSON newline.";
-  if (/(SELECT|INSERT|UPDATE|DELETE|CREATE TABLE|BEGIN|COMMIT|ROLLBACK)/.test(trimmed) && !/^run:/.test(trimmed)) return "Dòng SQL/transaction tác động trực tiếp lên SQLite.";
-  if (/lock\(|unlock\(|ReentrantLock|synchronized|ConcurrentHashMap|ScheduledExecutorService|schedule/i.test(trimmed)) return "Dòng concurrency/scheduler cần giải thích khi bị hỏi race condition.";
-  if (/Platform\.runLater|CompletableFuture|thenAccept|exceptionally/.test(trimmed)) return "Dòng async/UI-thread, giải thích cách cập nhật JavaFX an toàn.";
-  if (/validate|throw new|Exception|IllegalArgumentException/.test(trimmed)) return "Validation hoặc exception path, quyết định lỗi được báo cho client ra sao.";
-  if (layer === "FXML View") return "Dòng layout/control FXML quyết định người dùng nhìn thấy hoặc bấm gì.";
-  if (layer === "CSS") return "Dòng style ảnh hưởng giao diện JavaFX.";
-  if (layer === "Maven") return "Dòng cấu hình build/dependency/plugin trong Maven.";
-  return "Dòng quan trọng để giải thích trách nhiệm file và luồng chạy.";
+  if (/Action\./.test(trimmed)) return "Điểm neo cho request routing hoặc action contract giữa client và server.";
+  if (/ClientRequest|ClientResponse|ServerPushMessage/.test(trimmed)) return "Dòng này chạm trực tiếp vào contract object đi qua socket.";
+  if (/ObjectOutputStream|ObjectInputStream|Socket/.test(trimmed)) return "Cho thấy dự án đang giao tiếp raw TCP socket bằng Java Serialization, không phải REST/JSON.";
+  if (/BCrypt/.test(trimmed)) return "Chứng minh password được hash/check ở server thay vì tin vào client.";
+  if (/ReentrantLock|ConcurrentHashMap|computeIfAbsent|lock\(|unlock\(/.test(trimmed)) return "Đây là chỗ bảo vệ race condition khi nhiều client bid cùng một auction.";
+  if (/ScheduledExecutorService|scheduleAuction|schedule\(|extendAuctionEnd/.test(trimmed)) return "Liên quan scheduler hoặc anti-sniping - phần dễ bị hỏi khi nói về lifecycle auction.";
+  if (/notifyNewBid|notifyAuctionEnded|notifyStatusChanged|broadcast/.test(trimmed)) return "Observer/realtime line: state đổi xong rồi mới phát push ra toàn bộ client.";
+  if (/ItemFactory|createItem\(/.test(trimmed)) return "Thể hiện pattern hoặc điểm khởi tạo object domain thay vì hard-code subclass ở UI.";
+  if (/thenAccept|CompletableFuture|Platform\.runLater/.test(trimmed)) return "Async UI-handling line: network chạy nền nhưng update JavaFX phải quay lại UI thread.";
+  if (/fx:controller|onAction|@FXML/.test(trimmed)) return "Neo giữa FXML và controller method thật chạy khi user click hoặc load màn hình.";
+  if (/saveData|loadData|auction_data\.dat|FileOutputStream|FileInputStream/.test(trimmed)) return "Chỉ ra persistence snapshot của hệ thống nằm ở DataStore và file .dat.";
+  if (layer === "Test") return "Dòng test dùng làm bằng chứng hành vi; đọc theo Arrange-Act-Assert sẽ dễ hơn chỉ đọc tên method.";
+  if (layer === "Maven" || layer === "CI") return "Dòng build/CI này cho biết project được ghép module và chạy verify như thế nào.";
+  return "Dòng quan trọng để neo câu trả lời vào code thật thay vì mô tả chung chung.";
 }
 
 function parseJava(lines) {
   const declarations = [];
   const methods = [];
-  const methodRegex =
-    /^\s*(?:@\w+(?:\([^)]*\))?\s*)*(?:(?:public|private|protected|static|final|synchronized|abstract)\s+)*(?:<[^>]+>\s*)?[\w<>\[\].?,\s]+\s+([A-Za-z_][A-Za-z0-9_]*)\s*\([^;]*\)\s*(?:throws\s+[^{]+)?\{/;
-  const typeRegex = /^\s*(?:public\s+)?(?:final\s+|abstract\s+)?(class|interface|enum|record)\s+([A-Za-z_][A-Za-z0-9_]*)/;
-  lines.forEach((line, index) => {
-    const typeMatch = line.match(typeRegex);
-    if (typeMatch) declarations.push({ line: index + 1, kind: typeMatch[1], name: typeMatch[2], code: line.trim() });
-    const methodMatch = line.match(methodRegex);
-    if (methodMatch && !["if", "for", "while", "switch", "catch", "new"].includes(methodMatch[1])) {
-      methods.push({ line: index + 1, name: methodMatch[1], code: line.trim() });
-    }
-  });
-  return { declarations, methods };
-}
+  const importantLines = [];
 
-function importantLineCandidates(lines, layer) {
-  const pattern =
-    /(class |interface |enum |record |@FXML|fx:id=|onAction=|MessageType\.|Response\.|sendRequest|CREATE TABLE|SELECT |INSERT |UPDATE |DELETE |BEGIN|COMMIT|ROLLBACK|lock\(|unlock\(|ReentrantLock|ConcurrentHashMap|ScheduledExecutorService|schedule|subscribe|broadcast|Platform\.runLater|CompletableFuture|throw new|validate|dependency>|artifactId>|module>)/;
-  const refs = [];
-  lines.forEach((line, index) => {
-    if (pattern.test(line) && line.trim()) {
-      refs.push({
-        line: index + 1,
-        code: line.trim().slice(0, 220),
-        explain: lineExplain(line, layer),
+  const methodPattern = /^\s*(?:public|private|protected)\s+(?:static\s+)?(?:final\s+)?(?:synchronized\s+)?(?:<[^>]+>\s*)?[\w[\]<>?,.\s]+\s+([A-Za-z_][A-Za-z0-9_]*)\s*\([^;]*\)\s*(?:throws [^{]+)?\{?\s*$/;
+  const constructorPattern = /^\s*(?:public|private|protected)\s+([A-Z][A-Za-z0-9_]*)\s*\([^;]*\)\s*(?:throws [^{]+)?\{?\s*$/;
+  const declarationPattern = /\b(class|interface|enum|record)\s+([A-Za-z_][A-Za-z0-9_]*)/;
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const lineNo = index + 1;
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+
+    const declarationMatch = trimmed.match(declarationPattern);
+    if (declarationMatch && !trimmed.startsWith("//")) {
+      declarations.push({
+        line: lineNo,
+        kind: declarationMatch[1],
+        name: declarationMatch[2],
+        code: trimmed,
       });
     }
-  });
-  return refs.slice(0, 14);
+
+    const constructorMatch = trimmed.match(constructorPattern);
+    if (constructorMatch && !trimmed.startsWith("//")) {
+      methods.push({
+        line: lineNo,
+        name: constructorMatch[1],
+        code: trimmed,
+      });
+      continue;
+    }
+
+    const methodMatch = trimmed.match(methodPattern);
+    if (methodMatch && !trimmed.startsWith("//")) {
+      methods.push({
+        line: lineNo,
+        name: methodMatch[1],
+        code: trimmed,
+      });
+    }
+  }
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const raw = lines[index];
+    const trimmed = raw.trim();
+    if (!trimmed || trimmed.startsWith("//")) continue;
+    if (
+      trimmed.startsWith("package ") ||
+      trimmed.startsWith("public class ") ||
+      trimmed.startsWith("public interface ") ||
+      trimmed.startsWith("public enum ") ||
+      trimmed.startsWith("public record ") ||
+      trimmed.startsWith("@FXML") ||
+      trimmed.includes("ObjectOutputStream") ||
+      trimmed.includes("ObjectInputStream") ||
+      trimmed.includes("ClientRequest") ||
+      trimmed.includes("ClientResponse") ||
+      trimmed.includes("ServerPushMessage") ||
+      trimmed.includes("switch (action)") ||
+      trimmed.startsWith("case ") ||
+      trimmed.includes("Action.") ||
+      trimmed.includes("BCrypt") ||
+      trimmed.includes("ReentrantLock") ||
+      trimmed.includes("computeIfAbsent") ||
+      trimmed.includes("scheduleAuction") ||
+      trimmed.includes("notifyNewBid") ||
+      trimmed.includes("notifyAuctionEnded") ||
+      trimmed.includes("notifyStatusChanged") ||
+      trimmed.includes("saveData") ||
+      trimmed.includes("loadData") ||
+      trimmed.includes("auction_data.dat") ||
+      trimmed.includes("Platform.runLater") ||
+      trimmed.includes("thenAccept") ||
+      trimmed.includes("CompletableFuture")
+    ) {
+      importantLines.push({
+        line: index + 1,
+        code: trimmed,
+      });
+    }
+  }
+
+  return { declarations, methods, importantLines };
 }
 
-function extractFxmlActions(file) {
-  const text = readFileSync(file, "utf8");
-  const lines = text.split(/\r?\n/);
-  const controllerLine = lines.findIndex((line) => line.includes("fx:controller"));
-  const controllerMatch = text.match(/fx:controller="([^"]+)"/);
+function parseFXML(lines) {
+  let controller = null;
+  let controllerLine = null;
   const actions = [];
-  lines.forEach((line, index) => {
-    for (const match of line.matchAll(/onAction="#([^"]+)"/g)) {
-      actions.push({ action: match[1], line: index + 1, code: line.trim() });
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (!controller) {
+      const controllerMatch = line.match(/fx:controller="([^"]+)"/);
+      if (controllerMatch) {
+        controller = controllerMatch[1];
+        controllerLine = index + 1;
+      }
     }
-  });
-  return {
-    controller: controllerMatch?.[1] ?? "",
-    controllerLine: controllerLine >= 0 ? controllerLine + 1 : null,
-    actions,
-  };
-}
-
-function normalizeQuestion(q) {
-  const vi = (value) => (typeof value === "string" ? viText(value) : value);
-  const answerBullets = q.answerBullets?.length
-    ? q.answerBullets.map(vi)
-    : [vi(q.answer)].filter(Boolean);
-  const mustMention = q.mustMention?.length
-    ? q.mustMention
-    : [q.filePath, q.topic].filter(Boolean).slice(0, 4);
-  const commonMistakes = q.commonMistakes?.length
-    ? q.commonMistakes.map(vi)
-    : [
-        "Chỉ đọc tên file/dòng code mà không nói được luồng chạy.",
-        "Bỏ qua server là nguồn sự thật cho validation và phân quyền.",
-      ];
-  const rawTags = q.tags?.length
-    ? q.tags
-    : [q.level, q.topic].filter(Boolean);
-  const tags = Array.from(new Set(rawTags));
-  const normalized = {
-    ...q,
-    level: vi(q.level),
-    topic: vi(q.topic),
-    question: vi(q.question),
-    intent: vi(q.intent ?? "Kiểm tra khả năng nối code với luồng chạy, business rule và rủi ro khi demo."),
-    answerBullets,
-    mustMention,
-    commonMistakes,
-    followUps: q.followUps.map(vi),
-    tags,
-  };
-  const answer = buildLearningAnswer(normalized);
-  return {
-    ...normalized,
-    answer,
-  };
-}
-
-function buildLearningAnswer(q) {
-  const baseAnswer = viText(q.answer || "");
-  const files = extractAnswerFiles(q);
-  const refs = (q.lineRefs ?? []).slice(0, 5);
-  const firstFile = files[0] || q.filePath || "file chính trong câu hỏi";
-  const category = q.tags?.[0] || q.level || "Vấn đáp";
-  const lineGuide = refs.length
-    ? refs
-        .map((ref) => {
-          const refPath = ref.path || q.filePath || firstFile;
-          return `- ${refPath}: dòng ${ref.line} là \`${ref.code}\`. Ý nghĩa: ${viText(ref.explain)}`
-        })
-        .join("\n")
-    : "- Câu này không có line ref tự động; mở file chính, đọc từ class/method đầu tiên rồi nối sang file kế tiếp trong flow.";
-  const fileGuide = files.length
-    ? files.map((file, index) => `${index + 1}. ${file}`).join("\n")
-    : `1. ${firstFile}`;
-  const mustMention = q.mustMention?.slice(0, 6).map(viText) ?? [];
-  const bullets = q.answerBullets?.slice(0, 6).map(viText) ?? [];
-  const followUps = q.followUps?.slice(0, 3).map(viText) ?? [];
-
-  const opening = answerOpeningFor(q, category, firstFile);
-  const reasoning = answerReasoningFor(q, category);
-  const proof = answerProofFor(q, category);
-  const sample = answerSampleSentence(q, category, firstFile);
-
-  return [
-    `1. Câu trả lời ngắn cần nói trước:\n${opening}\n${baseAnswer}`,
-    `2. Cách lần code để trả lời miệng:\n${fileGuide}\nKhi nói, không đọc tên file rời rạc. Hãy nói file trước tạo dữ liệu gì, file sau nhận dữ liệu đó để làm gì, và dữ liệu quay về UI bằng Response hay event nào.`,
-    `3. Giải thích các dòng nên mở:\n${lineGuide}`,
-    `4. Lập luận nghiệp vụ/thiết kế:\n${reasoning}\nCác ý bắt buộc phải chạm tới: ${mustMention.length ? mustMention.join("; ") : "role/layer/input/output/rủi ro/test liên quan"}.`,
-    `5. Cách nói để đạt điểm:\n${bullets.length ? bullets.map((item) => `- ${item}`).join("\n") : "- Nói theo thứ tự: thao tác -> request -> service -> DAO/event -> kết quả."}\n${proof}`,
-    `6. Câu mẫu có thể học thuộc để bắt đầu:\n"${sample}"`,
-    followUps.length
-      ? `7. Nếu bị hỏi tiếp, chuẩn bị trả lời:\n${followUps.map((item) => `- ${item}`).join("\n")}`
-      : "",
-  ].filter(Boolean).join("\n\n");
-}
-
-function extractAnswerFiles(q) {
-  const values = [
-    q.filePath,
-    q.answer,
-    ...(q.mustMention ?? []),
-    ...((q.lineRefs ?? []).map((ref) => ref.path).filter(Boolean)),
-  ].filter(Boolean);
-  const text = values.join(" ");
-  const matches = Array.from(text.matchAll(/(?:common|client|server|docs|\.github)\/[A-Za-z0-9_./-]+\.(?:java|fxml|css|xml|properties|sql|md|yml|yaml)|(?:^|\s)(?:pom\.xml|server\/pom\.xml|client\/pom\.xml|common\/pom\.xml)/g))
-    .map((match) => match[0].trim());
-  return Array.from(new Set(matches)).slice(0, 8);
-}
-
-function answerOpeningFor(q, category, firstFile) {
-  const topic = q.topic || "luồng này";
-  if (category === "Flow") return `Em sẽ trả lời theo luồng end-to-end của ${topic}: bắt đầu từ thao tác người dùng, đi qua client service/socket, vào handler/router, xuống service/DAO, rồi quay lại UI bằng response hoặc realtime event. File mở đầu là ${firstFile}.`;
-  if (category === "Design") return `Em sẽ định nghĩa nguyên lý ${topic} bằng một câu, sau đó chứng minh nó xuất hiện trong code thật. File neo đầu tiên là ${firstFile}; từ đó nối sang layer liên quan để thấy vì sao thiết kế này giúp hệ thống dễ test và ít lỗi hơn.`;
-  if (category === "Pattern") return `Em sẽ nói ${topic} giải quyết vấn đề gì trong dự án, nó nằm ở file nào, và nếu bỏ nó thì coupling/lặp code/rủi ro test sẽ tăng ra sao. File neo đầu tiên là ${firstFile}.`;
-  if (category === "Debug") return `Em sẽ trả lời như một quy trình debug: mô tả triệu chứng, khoanh vùng layer, mở file nghi ngờ đầu tiên là ${firstFile}, kiểm invariant cần giữ, rồi nêu test/manual case tái hiện.`;
-  if (category === "Test") return `Em sẽ giải thích test theo Arrange-Act-Assert, không chỉ nói test pass. File mở đầu là ${firstFile}; cần nói dữ liệu được setup, hành động được gọi, và assert bảo vệ rule nào.`;
-  if (category === "Role") return `Em sẽ phân biệt rõ UI permission và server authorization. File mở đầu là ${firstFile}; server mới là nơi kiểm token, role, owner/resource và business rule.`;
-  if (category === "Line code") return `Em sẽ bắt đầu từ chính dòng được hỏi trong ${firstFile}, giải thích dòng đó thuộc layer nào, ai gọi nó, output đi đâu, và sửa sai thì hỏng flow/test nào.`;
-  return `Em sẽ trả lời từ ${firstFile}, nói trách nhiệm file, input/output và rủi ro nếu sửa sai.`;
-}
-
-function answerReasoningFor(q, category) {
-  if (category === "Flow") return "Điểm quan trọng là client JavaFX không phải nguồn sự thật. Client chỉ validate nhanh và gửi request. Server mới kiểm quyền, kiểm rule nghiệp vụ, ghi SQLite và phát event. Vì vậy câu trả lời phải luôn nối UI với server service và DAO/event.";
-  if (category === "Design") return "Phần thiết kế cần trả lời bằng tradeoff: tách layer giúp dễ test, dễ chia việc và dễ khoanh vùng lỗi; đổi lại phải giữ contract DTO/protocol rõ ràng để không lệch client-server.";
-  if (category === "Pattern") return "Không chỉ nêu định nghĩa pattern. Phải nói pattern giảm phụ thuộc cụ thể nào, giúp mở rộng ở đâu, và test nào chứng minh behavior không bị phá.";
-  if (category === "Debug") return "Khi debug, không nhảy thẳng vào sửa UI. Trước tiên xác định rule thật nằm ở client, socket, handler, service hay DAO; sau đó kiểm log/test để tránh sửa sai layer.";
-  if (category === "Test") return "Một test có giá trị khi nó bảo vệ invariant. Cần nói nếu test fail thì feature nào trong demo có nguy cơ hỏng, không chỉ đọc tên method test.";
-  if (category === "Role") return "Phải nhấn mạnh UI ẩn nút chỉ là UX. Nếu user gửi request bằng tool riêng, RequestRouter/handler/service vẫn phải reject nếu token/role/owner không hợp lệ.";
-  if (category === "Line code") return "Line code chỉ có điểm khi đặt trong flow: dòng này nhận input gì, tạo output gì, invariant nào được giữ, và lỗi sẽ lan sang UI/server/test nào.";
-  return "Luôn nối câu trả lời với input, output, layer chịu trách nhiệm và bằng chứng test/manual case.";
-}
-
-function answerProofFor(q, category) {
-  if (category === "Test") return "Kết thúc bằng câu: test này bảo vệ behavior nào trong demo, ví dụ race condition, authorization, rollback, socket event hoặc mapping SQLite.";
-  if (category === "Debug") return "Kết thúc bằng cách verify: chạy test liên quan hoặc tái hiện manual case, sau đó kiểm UI message/log/database state.";
-  if (category === "Role") return "Kết thúc bằng test authorization hoặc manual case request sai role để chứng minh server không tin client.";
-  if (category === "Line code") return "Kết thúc bằng test/manual case gần nhất có thể fail nếu dòng này bị sửa sai.";
-  return "Kết thúc bằng một bằng chứng: test, manual demo, log server/client hoặc state DB thay đổi đúng.";
-}
-
-function answerSampleSentence(q, category, firstFile) {
-  const topic = q.topic || "phần này";
-  if (category === "Flow") return `Với ${topic}, em đi từ UI trước, nhưng điểm quyết định nằm ở server service; em mở ${firstFile} để bắt đầu rồi lần theo request đến handler, service, DAO và response/event quay về client.`;
-  if (category === "Design" || category === "Pattern") return `${topic} trong project không phải lý thuyết rời rạc; nó thể hiện ở ${firstFile}, giúp tách trách nhiệm, giảm coupling và làm test dễ hơn.`;
-  if (category === "Debug") return `Nếu lỗi ${topic} xảy ra, em không đoán ngay; em tái hiện triệu chứng, mở ${firstFile}, kiểm invariant rồi chạy test liên quan để xác nhận.`;
-  if (category === "Test") return `Test ${topic} chứng minh behavior bằng Arrange-Act-Assert: setup dữ liệu, gọi đúng class/method, rồi assert invariant không bị phá.`;
-  if (category === "Role") return `${topic} phải được bảo vệ ở server; UI chỉ hỗ trợ trải nghiệm, còn ${firstFile} và các lớp server mới quyết định request có được phép chạy không.`;
-  if (category === "Line code") return `Dòng này quan trọng vì nó là một mắt xích trong flow; em sẽ nói nó nhận gì, trả gì, ai gọi nó và nếu sai thì test/demo nào hỏng.`;
-  return `Em sẽ mở ${firstFile}, nói trách nhiệm, luồng dữ liệu và bằng chứng kiểm chứng.`;
-}
-
-function viText(text) {
-  const replacements = [
-    ["Kiem tra", "Kiểm tra"],
-    ["kha nang", "khả năng"],
-    ["noi code", "nối code"],
-    ["voi luong", "với luồng"],
-    ["rui ro", "rủi ro"],
-    ["Neu thay yeu cau", "Nếu thấy yêu cầu"],
-    ["em hay di tu", "em hãy đi từ"],
-    ["man hinh", "màn hình"],
-    ["dong thoi", "đồng thời"],
-    ["chi ro", "chỉ rõ"],
-    ["file nao can mo", "file nào cần mở"],
-    [" den ", " đến "],
-    [" va ", " và "],
-    ["voi ", "với "],
-    ["tra loi", "trả lời"],
-    ["thuc hien", "thực hiện"],
-    ["luồng nay", "luồng này"],
-    ["flow nay", "flow này"],
-    ["nay", "này"],
-    ["Trong luong", "Trong luồng"],
-    ["dau la boundary", "đâu là boundary"],
-    ["Neu luong", "Nếu luồng"],
-    ["bi loi giua chung", "bị lỗi giữa chừng"],
-    ["theo thu tu nao", "theo thứ tự nào"],
-    ["Tai sao", "Tại sao"],
-    ["khong de", "không để"],
-    ["thao tac truc tiep", "thao tác trực tiếp"],
-    ["Hay giai thich", "Hãy giải thích"],
-    ["Luong", "Luồng"],
-    ["Thu tu", "Thứ tự"],
-    ["nen mo", "nên mở"],
-    ["Cach tra loi tot", "Cách trả lời tốt"],
-    ["bat dau", "bắt đầu"],
-    ["thao tac", "thao tác"],
-    ["toi request", "tới request"],
-    ["xu ly nghiep vu", "xử lý nghiệp vụ"],
-    ["neu co", "nếu có"],
-    ["quay ve", "quay về"],
-    ["Quay ve", "Quay về"],
-    ["Noi thao tac", "Nói thao tác"],
-    ["Noi ", "Nói "],
-    ["nguoi dung", "người dùng"],
-    ["Nguoi dung", "Người dùng"],
-    ["tren UI", "trên UI"],
-    [" di qua", " đi qua"],
-    ["Dang nhap", "Đăng nhập"],
-    ["dang nhap", "đăng nhập"],
-    ["Dang ky", "Đăng ký"],
-    ["dang ky", "đăng ký"],
-    ["tao token", "tạo token"],
-    ["tao ", "tạo "],
-    ["luu session", "lưu session"],
-    ["de goi", "để gọi"],
-    ["tiep theo", "tiếp theo"],
-    ["chan tao", "chặn tạo"],
-    ["tu public UI", "từ public UI"],
-    ["danh sach", "danh sách"],
-    ["danh dau", "đánh dấu"],
-    ["phien dau gia", "phiên đấu giá"],
-    ["dau gia", "đấu giá"],
-    ["doc DB truc tiep", "đọc DB trực tiếp"],
-    ["truc tiep", "trực tiếp"],
-    ["Man detail", "Màn detail"],
-    ["ghep thong tin", "ghép thông tin"],
-    ["thoi gian", "thời gian"],
-    [" và anh", " và ảnh"],
-    ["gan cuoi phien", "gần cuối phiên"],
-    ["keo dai", "kéo dài"],
-    ["thong bao", "thông báo"],
-    ["dang xem", "đang xem"],
-    ["Nap/rut/giu tien", "Nạp/rút/giữ tiền"],
-    ["phai di qua", "phải đi qua"],
-    ["phai bao quanh", "phải bao quanh"],
-    ["dung owner", "đúng owner"],
-    ["dung loai", "đúng loại"],
-    ["dung cách", "đúng cách"],
-    ["dung cach", "đúng cách"],
-    ["không dung", "không dùng"],
-    ["Neu không dung", "Nếu không dùng"],
-    ["ghi de nhau", "ghi đè nhau"],
-    ["lam viec", "làm việc"],
-    ["mo rong", "mở rộng"],
-    ["o diem", "ở điểm"],
-    ["lang nghe", "lắng nghe"],
-    ["giu tien", "giữ tiền"],
-    ["tang gia", "tăng giá"],
-    [" đặt gia", " đặt giá"],
-    [" gia,", " giá,"],
-    [" gia.", " giá."],
-    ["Cách trả lời tot", "Cách trả lời tốt"],
-    ["Cau trả lời tot", "Câu trả lời tốt"],
-    [" tot la", " tốt là"],
-    ["bắt đầu tu", "bắt đầu từ"],
-    [" roi ", " rồi "],
-    [" hoac ", " hoặc "],
-    [" co ", " có "],
-    [" nao ", " nào "],
-    ["ten file", "tên file"],
-    ["thu tu", "thứ tự"],
-    ["co che nao", "cơ chế nào"],
-    ["có che nao", "cơ chế nào"],
-    ["bang có che", "bằng cơ chế"],
-    ["bang test/file", "bằng test/file"],
-    ["trace tu", "trace từ"],
-    ["Nguyen ly", "Nguyên lý"],
-    ["nguyen ly", "nguyên lý"],
-    ["dat ", "đặt "],
-    ["tu dong", "tự động"],
-    ["gioi han", "giới hạn"],
-    ["dau tien", "đầu tiên"],
-    ["Chi ra", "Chỉ ra"],
-    ["Noi service", "Nói service"],
-    ["that su", "thật sự"],
-    ["Noi DAO", "Nói DAO"],
-    ["Chi ke", "Chỉ kể"],
-    ["nhung khong noi", "nhưng không nói"],
-    ["Nhan lam", "Nhầm lẫn"],
-    ["voi server", "với server"],
-    ["Quen noi", "Quên nói"],
-    ["Neu server", "Nếu server"],
-    ["hien thi o dau", "hiển thị ở đâu"],
-    ["Role nao duoc phep", "Role nào được phép"],
-    ["Test nao gan nhat", "Test nào gần nhất"],
-    ["chung minh", "chứng minh"],
-    ["Tai sao thiet ke", "Tại sao thiết kế"],
-    ["phu hop", "phù hợp"],
-    ["bai dau gia", "bài đấu giá"],
-    ["cua nhom", "của nhóm"],
-    ["Neu bo", "Nếu bỏ"],
-    ["se kho test", "sẽ khó test"],
-    ["de loi", "dễ lỗi"],
-    ["Hay chi file", "Hãy chỉ file"],
-    ["the hien", "thể hiện"],
-    ["trach nhiem", "trách nhiệm"],
-    ["tung layer", "từng layer"],
-    ["thanh vien", "thành viên"],
-    ["chia viec", "chia việc"],
-    ["bao ve van dap", "bảo vệ vấn đáp"],
-    ["Khi co bug", "Khi có bug"],
-    ["khoanh vung loi", "khoanh vùng lỗi"],
-    ["den DB", "đến DB"],
-    ["Trong repo, mo", "Trong repo, mở"],
-    ["nguyen ly", "nguyên lý"],
-    ["truoc", "trước"],
-    ["sau do", "sau đó"],
-    ["ap dung", "áp dụng"],
-    ["cuoi cung", "cuối cùng"],
-    ["duoc phong tranh", "được phòng tránh"],
-    ["quan ly", "quản lý"],
-    ["tach dependency", "tách dependency"],
-    ["dung pham vi", "đúng phạm vi"],
-    ["pham vi", "phạm vi"],
-    ["thay vi", "thay vì"],
-    ["hieu kien truc", "hiểu kiến trúc"],
-    ["hoc thuoc", "học thuộc"],
-    ["Dinh nghia", "Định nghĩa"],
-    ["bang mot cau ngan", "bằng một câu ngắn"],
-    ["Gan nguyen ly", "Gắn nguyên lý"],
-    ["file that", "file thật"],
-    ["Noi loi", "Nói lỗi"],
-    ["co the", "có thể"],
-    ["Tra loi", "Trả lời"],
-    ["ly thuyet", "lý thuyết"],
-    ["chung chung", "chung chung"],
-    ["khong chi duoc", "không chỉ được"],
-    ["Gom controller", "Gộp controller"],
-    ["thanh mot vai tro", "thành một vai trò"],
-    ["Khong noi", "Không nói"],
-    ["thiet ke bi pha", "thiết kế bị phá"],
-    ["Trong repo co file nao", "Trong repo có file nào"],
-    ["vi pham nhe", "vi phạm nhẹ"],
-    ["Neu them tinh nang moi", "Nếu thêm tính năng mới"],
-    ["sua layer nao", "sửa layer nào"],
-    ["lien quan", "liên quan"],
-    ["Project dung", "Project dùng"],
-    ["o dau", "ở đâu"],
-    ["giai quyet", "giải quyết"],
-    ["van de thiet ke", "vấn đề thiết kế"],
-    ["code se bi lap", "code sẽ bị lặp"],
-    ["dinh nghia sach giao khoa", "định nghĩa sách giáo khoa"],
-    ["Khi van dap", "Khi vấn đáp"],
-    ["se demo", "sẽ demo"],
-    ["File nen mo", "File nên mở"],
-    ["Cau tra loi tot", "Câu trả lời tốt"],
-    ["lam giam", "làm giảm"],
-    ["tang", "tăng"],
-    ["kha nang mo rong", "khả năng mở rộng"],
-    ["Noi ten", "Nói tên"],
-    ["Chi file", "Chỉ file"],
-    ["line neo", "line neo"],
-    ["rui ro", "rủi ro"],
-    ["dung sai", "dùng sai"],
-    ["Noi pattern", "Nói pattern"],
-    ["nhan dien", "nhận diện"],
-    ["Nhan nham", "Nhầm"],
-    ["voi DTO", "với DTO"],
-    ["co lam", "có làm"],
-    ["phuc tap", "phức tạp"],
-    ["Co the thay", "Có thể thay"],
-    ["don gian", "đơn giản"],
-    ["giup sua it file nao", "giúp sửa ít file nào"],
-    ["xay ra", "xảy ra"],
-    ["em trace tu dau", "em trace từ đâu"],
-    ["mong doi", "mong đợi"],
-    ["thay doi", "thay đổi"],
-    ["la loi nguy hiem", "là lỗi nguy hiểm"],
-    ["he thong", "hệ thống"],
-    ["hien tai", "hiện tại"],
-    ["phong tranh", "phòng tránh"],
-    ["co che", "cơ chế"],
-    ["Neu test", "Nếu test"],
-    ["doc file", "đọc file"],
-    ["dua ra", "đưa ra"],
-    ["mot cach tai hien", "một cách tái hiện"],
-    ["tai hien", "tái hiện"],
-    ["bang thao tac", "bằng thao tác"],
-    ["Trace nen mo", "Trace nên mở"],
-    ["trieu chung", "triệu chứng"],
-    ["UI/server", "UI/server"],
-    ["lam gi", "làm gì"],
-    ["phai giu", "phải giữ"],
-    ["bao ve", "bảo vệ"],
-    ["nang luc debug", "năng lực debug"],
-    ["thuan tuy", "thuần túy"],
-    ["Mo ta symptom", "Mô tả symptom"],
-    ["nghi ngo", "nghi ngờ"],
-    ["Do loi", "Đổ lỗi"],
-    ["nam o", "nằm ở"],
-    ["Bo qua", "Bỏ qua"],
-    ["da co san", "đã có sẵn"],
-    ["Sau khi fix", "Sau khi fix"],
-    ["can verify", "cần verify"],
-    ["Thong bao", "Thông báo"],
-    ["hien o client", "hiện ở client"],
-    ["giang vien hoi", "giảng viên hỏi"],
-    ["chung minh dieu gi", "chứng minh điều gì"],
-    ["se giai thich", "sẽ giải thích"],
-    ["du lieu dau vao", "dữ liệu đầu vào"],
-    ["hanh dong", "hành động"],
-    ["cuoi cung", "cuối cùng"],
-    ["doc test", "đọc test"],
-    ["chay lenh test", "chạy lệnh test"],
-    ["setup du lieu", "setup dữ liệu"],
-    ["goi class", "gọi class"],
-    ["tinh nang", "tính năng"],
-    ["co nguy co hong", "có nguy cơ hỏng"],
-    ["Chi noi", "Chỉ nói"],
-    ["Khong phan biet", "Không phân biệt"],
-    ["Quen noi", "Quên nói"],
-    ["Lenh Maven", "Lệnh Maven"],
-    ["co dung", "có dùng"],
-    ["Voi", "Với"],
-    ["quyen", "quyền"],
-    ["bao mat", "bảo mật"],
-    ["mat diem", "mất điểm"],
-    ["Cach", "Cách"],
-    ["cach", "cách"],
-    ["Hay ", "Hãy "],
-    ["giai thich", "giải thích"],
-    ["dinh nghia", "định nghĩa"],
-    ["dieu gi", "điều gì"],
-    ["nhu the nao", "như thế nào"],
-    ["Mo ", "Mở "],
-    ["rieng", "riêng"],
-    ["that", "thật"],
-    ["phia", "phía"],
-    ["phai dam bao", "phải đảm bảo"],
-    ["khong mat diem", "không mất điểm"],
-    ["phan role", "phần role"],
-    ["Can mo", "Cần mở"],
-    ["co the an/hien", "có thể ẩn/hiện"],
-    ["nhung server moi", "nhưng server mới"],
-    ["kiem token", "kiểm token"],
-    ["moi quyet dinh", "mới quyết định"],
-    ["phan biet", "phân biệt"],
-    ["duoc lam gi", "được làm gì"],
-    ["bi cam", "bị cấm"],
-    ["o dau", "ở đâu"],
-    ["Cho rang", "Cho rằng"],
-    ["du bao mat", "đủ bảo mật"],
-    ["Neu bidder", "Nếu bidder"],
-    ["xu ly sao", "xử lý sao"],
-    ["can hien", "cần hiện"],
-    ["cau hoi", "câu hỏi"],
-    ["doc code", "đọc code"],
-    ["ngu canh", "ngữ cảnh"],
-    ["dich tung dong", "dịch từng dòng"],
-    ["Doc dung", "Đọc đúng"],
-    ["lien he", "liên hệ"],
-    ["yeu cau de bai", "yêu cầu đề bài"],
-    ["doi line", "đổi line"],
-    ["can chay", "cần chạy"],
-    ["hien ra", "hiện ra"],
-    ["Y nghia", "Ý nghĩa"],
-    ["File nay thuoc", "File này thuộc"],
-    ["chinh", "chính"],
-    ["ai goi no", "ai gọi nó"],
-    ["loi se lan", "lỗi sẽ lan"],
-    ["doc lai cu phap", "đọc lại cú pháp"],
-    ["Lien quan", "Liên quan"],
-    ["Hoi xoay", "Hỏi xoáy"],
-    ["Kien truc", "Kiến trúc"],
-    ["duoc", "được"],
-    ["khong", "không"],
-    ["luong", "luồng"],
-    ["noi", "nói"],
-  ];
-  const wordMap = new Map([
-    ["tu", "từ"],
-    ["nao", "nào"],
-    ["neu", "nếu"],
-    ["moi", "mới"],
-    ["chan", "chặn"],
-    ["phai", "phải"],
-    ["dung", "dùng"],
-    ["loai", "loại"],
-    ["chi", "chỉ"],
-    ["sua", "sửa"],
-    ["huy", "hủy"],
-    ["trang", "trạng"],
-    ["thai", "thái"],
-    ["phep", "phép"],
-    ["cap", "cập"],
-    ["nhat", "nhật"],
-    ["phat", "phát"],
-    ["can", "cần"],
-    ["dong", "đóng"],
-    ["han", "hạn"],
-    ["tien", "tiền"],
-    ["loi", "lỗi"],
-    ["tam", "tạm"],
-    ["thoi", "thời"],
-    ["luu", "lưu"],
-    ["an", "ẩn"],
-    ["nut", "nút"],
-    ["cac", "các"],
-    ["nhan", "nhận"],
-    ["xu", "xử"],
-    ["ly", "lý"],
-    ["giup", "giúp"],
-    ["lap", "lập"],
-    ["mot", "một"],
-    ["trach", "trách"],
-    ["nhiem", "nhiệm"],
-    ["giai", "giải"],
-    ["thich", "thích"],
-    ["nang", "năng"],
-    ["luc", "lực"],
-    ["ngu", "ngữ"],
-    ["vao", "vào"],
-    ["cuoi", "cuối"],
-    ["cung", "cùng"],
-    ["lenh", "lệnh"],
-    ["that", "thật"],
-    ["quyen", "quyền"],
-    ["bang", "bằng"],
-    ["it", "ít"],
-    ["anh", "ảnh"],
-    ["huong", "hưởng"],
-    ["phu", "phụ"],
-    ["thuoc", "thuộc"],
-    ["nhom", "nhóm"],
-    ["gia", "giá"],
-    ["dau", "đấu"],
-    ["doc", "đọc"],
-    ["khong", "không"],
-    ["the", "thể"],
-    ["lam", "làm"],
-    ["rong", "rộng"],
-    ["diem", "điểm"],
-    ["mo", "mở"],
-    ["de", "để"],
-    ["sai", "sai"],
-  ]);
-  const withPhrases = replacements.reduce((acc, [from, to]) => acc.replaceAll(from, to), text);
-  return withPhrases.replace(/\b[A-Za-z]+\b/g, (word) => {
-    const replacement = wordMap.get(word.toLowerCase());
-    if (!replacement) return word;
-    return word[0] === word[0].toUpperCase()
-      ? `${replacement[0].toUpperCase()}${replacement.slice(1)}`
-      : replacement;
-  });
-}
-
-const files = walk(repoRoot)
-  .sort((a, b) => rel(a).localeCompare(rel(b)))
-  .filter((file) => {
-    try {
-      return statSync(file).size < 600_000;
-    } catch {
-      return false;
+    const actionMatches = [...line.matchAll(/onAction="#([^"]+)"/g)];
+    for (const match of actionMatches) {
+      actions.push({
+        action: match[1],
+        line: index + 1,
+        code: line.trim(),
+      });
     }
-  });
+  }
 
-function filePriority(relativePath) {
-  if (relativePath.includes("BidService.java")) return 0;
-  if (relativePath.includes("RequestRouter.java") || relativePath.includes("ClientHandler.java")) return 1;
-  if (relativePath.includes("AuctionManagerService.java") || relativePath.includes("AuctionService.java")) return 2;
-  if (relativePath.includes("AuthService.java") || relativePath.includes("WalletService.java")) return 3;
-  if (relativePath.includes("/controller/") || relativePath.includes("/socket/")) return 4;
-  if (relativePath.includes("/service/")) return 5;
-  if (relativePath.includes("/dao/")) return 6;
-  if (relativePath.includes("/protocol/") || relativePath.includes("/dto/") || relativePath.includes("/model/")) return 7;
-  if (relativePath.includes("/src/test/")) return 8;
-  if (relativePath.includes("/resources/fxml/")) return 9;
-  if (relativePath.includes("/resources/")) return 10;
-  if (relativePath.endsWith("pom.xml") || relativePath.startsWith(".github/")) return 11;
-  if (relativePath.startsWith("docs/")) return 12;
-  return 20;
-}
-
-const codeFiles = files.map((file) => {
-  const relativePath = rel(file);
-  const ext = path.extname(file).toLowerCase();
-  const text = readFileSync(file, "utf8");
-  const lines = text.split(/\r?\n/);
-  const layer = layerFor(relativePath);
-  const parsed = ext === ".java" ? parseJava(lines) : { declarations: [], methods: [] };
-  const fxml = ext === ".fxml" ? extractFxmlActions(file) : null;
-  return {
-    path: relativePath,
-    absolutePath: file.replaceAll(path.sep, "\\"),
-    layer,
-    module: relativePath.split("/")[0],
-    extension: ext || "none",
-    lineCount: lines.length,
-    summary: summaryFor(relativePath, layer, lines),
-    declarations: parsed.declarations,
-    methods: parsed.methods.slice(0, 24),
-    importantLines: importantLineCandidates(lines, layer),
-    fxml,
-  };
-}).sort((a, b) => filePriority(a.path) - filePriority(b.path) || a.path.localeCompare(b.path));
-
-const allRepoPaths = walkAll(repoRoot).sort((a, b) => rel(a).localeCompare(rel(b)));
-const codeMapPathSet = new Set(codeFiles.map((file) => file.path));
-const assetDocumentExtensions = new Set([".pdf", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico", ".docx", ".xlsx"]);
-const textInventory = allRepoPaths
-  .map((file) => rel(file))
-  .filter((file) => includedExtensions.has(path.extname(file).toLowerCase()));
-const assetDocumentInventory = allRepoPaths
-  .map((file) => rel(file))
-  .filter((file) => assetDocumentExtensions.has(path.extname(file).toLowerCase()));
-const intentionallyNotCodeMapped = allRepoPaths
-  .map((file) => rel(file))
-  .filter((file) => !includedExtensions.has(path.extname(file).toLowerCase()));
-const missingTextFiles = textInventory.filter((file) => !codeMapPathSet.has(file));
-const projectAudit = {
-  repoRoot,
-  totalFilesScanned: allRepoPaths.length,
-  codeMapFiles: codeFiles.length,
-  textFilesInInventory: textInventory.length,
-  assetDocumentFiles: assetDocumentInventory,
-  intentionallyNotCodeMapped,
-  missingTextFiles,
-  excludedDirectories: Array.from(excludedDirs).sort(),
-  includedExtensions: Array.from(includedExtensions).sort(),
-  note: "Code map chỉ render source/text line-by-line. PDF/PNG/DOCX/binary được đưa vào inventory để chứng minh đã rà project gốc nhưng không render như code.",
-};
-
-const byPath = new Map(codeFiles.map((file) => [file.path, file]));
-const controllerByClass = new Map();
-codeFiles
-  .filter((file) => file.layer === "JavaFX Controller")
-  .forEach((file) => {
-    const className = path.basename(file.path, ".java");
-    controllerByClass.set(`com.auction.client.controller.${className}`, file);
-  });
-
-const questions = [];
-
-const flowQuestionSeeds = [
-  ["Login", ["LoginController.java", "AuthClientService.java", "AuthRequestHandler.java", "AuthService.java", "SessionManager.java"], "Bidder/Seller/Admin dang nhap, server tao token va client luu session de goi request tiep theo."],
-  ["Register", ["RegisterController.java", "AuthClientService.java", "AuthRequestHandler.java", "AuthService.java", "SQLiteUserDao.java"], "Dang ky user moi, hash password va chan tao ADMIN tu public UI."],
-  ["Auction list", ["AuctionListController.java", "AuctionClientService.java", "AuctionRequestHandler.java", "AuctionService.java", "SQLiteAuctionDao.java"], "Bidder/Seller xem danh sach phien dau gia, client khong doc DB truc tiep."],
-  ["Auction detail", ["AuctionDetailController.java", "AuctionClientService.java", "BidTimeline.java", "ImageUrlUtil.java", "AuctionService.java"], "Man detail ghep thong tin item, gia, thoi gian, bid history va anh."],
-  ["Place bid", ["AuctionDetailController.java", "LiveBiddingController.java", "BidRequestHandler.java", "BidService.java", "AuctionLockManager.java", "SQLiteBidDao.java"], "Bidder dat gia, server validate rule, lock auction, transaction va broadcast realtime."],
-  ["Auto bidding", ["LiveBiddingController.java", "SetAutoBidRequest.java", "SQLiteAutoBidDao.java", "BidService.java", "AutoBidRule.java"], "Nguoi dung dat max bid/increment, server tu dong tang gia trong gioi han."],
-  ["Anti-sniping", ["BidService.java", "AuctionService.java", "NotificationService.java", "AuctionManagerService.java"], "Bid gan cuoi phien keo dai endTime va thong bao cho client dang xem."],
-  ["Wallet deposit", ["WalletController.java", "WalletClientService.java", "WalletRequestHandler.java", "WalletService.java", "SQLiteUserDao.java"], "Nap/rut/giu tien phai di qua server service va DAO user."],
-  ["Seller create auction", ["CreateAuctionController.java", "CreateAuctionRequest.java", "AuctionRequestHandler.java", "AuctionService.java", "ItemFactory.java"], "Seller tao item va auction, server dung Factory de tao model dung loai."],
-  ["Seller update/cancel", ["EditAuctionController.java", "AuctionRequestHandler.java", "AuctionService.java", "NotificationService.java"], "Seller chi duoc sua/huy khi dung owner va trang thai cho phep."],
-  ["Admin block user", ["AdminPanelController.java", "AdminClientService.java", "AdminRequestHandler.java", "SQLiteUserDao.java", "NotificationService.java"], "Admin cap nhat active status va server phat thong bao neu can."],
-  ["Scheduler close auction", ["AuctionManagerService.java", "AuctionSettlementTest.java", "WalletService.java", "NotificationService.java"], "Scheduler dong auction den han, settlement tien va retry neu loi tam thoi."],
-  ["Realtime subscription", ["SocketClient.java", "SubscriptionRequestHandler.java", "NotificationService.java", "ClientHandler.java"], "Client subscribe auction, server push event BID_UPDATE/AUCTION_CLOSED/TIME_EXTENDED."],
-];
-
-function matchFiles(names) {
-  return codeFiles.filter((file) => names.some((name) => file.path.endsWith(name) || file.path.includes(name)));
-}
-
-function refsFromFiles(files, max = 6) {
-  return files
-    .flatMap((file) => {
-      const refs = file.importantLines.length
-        ? file.importantLines
-        : [
-            ...file.declarations.map((item) => ({ line: item.line, code: item.code, explain: lineExplain(item.code, file.layer) })),
-            ...file.methods.map((item) => ({ line: item.line, code: item.code, explain: lineExplain(item.code, file.layer) })),
-          ];
-      return refs.slice(0, 1).map((ref) => ({ ...ref, path: file.path }));
-    })
-    .slice(0, max);
-}
-
-function primaryPath(files) {
-  return files[0]?.path ?? "";
-}
-
-function fileList(files) {
-  return files.map((file) => file.path).join(" -> ");
-}
-
-function addQuestion(category, q) {
-  questions.push(
-    normalizeQuestion({
-      id: `${category}-${questions.length + 1}`,
-      ...q,
-      tags: [category, ...(q.tags ?? [])],
-    }),
-  );
-}
-
-const flowPrompts = [
-  (name) => `Neu thay yeu cau demo ${name}, em hay di tu man hinh client den server va database, dong thoi chi ro file nao can mo.`,
-  (name) => `Trong luong ${name}, dau la boundary giua UI, protocol, business rule va persistence?`,
-  (name) => `Neu luong ${name} bi loi giua chung, em trace tu client sang server theo thu tu nao?`,
-  (name) => `Tai sao luong ${name} khong de client thao tac truc tiep database?`,
-  (name) => `Hay giai thich request/response hoac realtime event quay ve client trong luong ${name}.`,
-];
-
-for (let i = 0; i < 60; i += 1) {
-  const [flowName, names, purpose] = flowQuestionSeeds[i % flowQuestionSeeds.length];
-  const matched = matchFiles(names);
-  const prompt = flowPrompts[Math.floor(i / flowQuestionSeeds.length) % flowPrompts.length](flowName);
-  addQuestion("Flow", {
-    level: i % 3 === 0 ? "Demo" : "Hoi xoay",
-    topic: flowName,
-    question: prompt,
-    answer: `Luong ${flowName}: ${purpose} Thu tu file nen mo: ${fileList(matched)}. Cach tra loi tot la bat dau tu thao tac UI, qua client service/socket, toi request handler/router, service xu ly nghiep vu, DAO/DB neu co, roi quay ve response hoac realtime event.`,
-    intent: "Kiem tra kha nang demo luong end-to-end va noi tung layer voi code that.",
-    answerBullets: [
-      "Noi thao tac nguoi dung tren UI dau tien.",
-      "Chi ra DTO/MessageType/Request/Response di qua socket.",
-      "Noi service nao la noi business rule that su.",
-      "Noi DAO/database hoac NotificationService neu luong co persistence/realtime.",
-    ],
-    mustMention: [flowName, "Controller/FXML", "Client service/socket", "Handler/Service/DAO"],
-    commonMistakes: [
-      "Chi ke ten file nhung khong noi thu tu request di qua.",
-      "Nhan lam client service voi server service.",
-      "Quen noi response/event realtime quay ve UI.",
-    ],
-    filePath: primaryPath(matched),
-    lineRefs: refsFromFiles(matched),
-    followUps: [
-      "Neu server tra loi error thi controller hien thi o dau?",
-      "Role nao duoc phep thuc hien luong nay?",
-      "Test nao gan nhat co the chung minh luong nay?",
-    ],
-    tags: ["Flow", flowName, "Client-server"],
-  });
-}
-
-const architectureConcepts = [
-  ["Client-server boundary", ["SocketClient.java", "ClientHandler.java", "RequestRouter.java"], "Client chi render UI va gui request; server giu quyen xu ly nghiep vu va database.", ["client-server", "Socket", "Boundary"]],
-  ["MVC JavaFX", ["AuctionDetailController.java", "AuctionDetailView.fxml", "AuctionClientService.java"], "FXML la view, controller xu ly interaction, client service goi server.", ["MVC", "JavaFX", "Controller"]],
-  ["Handler-Service-DAO", ["RequestRouter.java", "BidRequestHandler.java", "BidService.java", "BidDao.java"], "Handler nhan protocol, service xu ly rule, DAO che SQL.", ["Layered Architecture", "DAO", "Service"]],
-  ["DTO/Protocol", ["Request.java", "Response.java", "MessageType.java", "PlaceBidRequest.java"], "DTO va protocol la hop dong giua client-server, giup hai module build doc lap.", ["DTO", "Protocol", "Gson"]],
-  ["Maven multi-module", ["pom.xml", "server/pom.xml", "client/pom.xml", "common/pom.xml"], "Parent pom quản lý version; common/server/client tách dependency đúng phạm vi. Khi build toàn bộ repo dùng lệnh mvn clean package từ thư mục gốc.", ["Maven", "Module", "Dependency scope", "mvn clean package"]],
-  ["Separation of concerns", ["AuctionListController.java", "AuctionClientService.java", "AuctionService.java", "SQLiteAuctionDao.java"], "Moi lop giu mot vai tro de team de chia viec va test.", ["SoC", "SRP", "Layer"]],
-  ["Transaction boundary", ["Database.java", "BidService.java", "AuctionService.java"], "Transaction phai bao quanh cac update lien quan de tranh trang thai nua voi.", ["Transaction", "ACID", "Rollback"]],
-  ["Authorization boundary", ["RequestRouter.java", "AuthService.java", "SessionManager.java"], "Server kiem session/role/owner, UI an nut khong du bao mat.", ["Auth", "Role", "Security"]],
-  ["Realtime event model", ["NotificationService.java", "SocketClient.java", "BidUpdateEvent.java"], "Server push event cho subscriber thay vi bat client polling lien tuc.", ["Realtime", "Observer", "Event"]],
-  ["Testability by interfaces", ["BidDao.java", "AuctionDao.java", "BidServiceTransactionTest.java"], "Service phu thuoc interface DAO nen test co the dung fake/failing DAO.", ["DIP", "Testability", "Interface"]],
-  ["Domain model boundary", ["User.java", "Bidder.java", "Seller.java", "Admin.java", "Item.java", "ItemFactory.java"], "OOP model mo ta role/item, con DTO dung de truyen qua mang.", ["OOP", "Domain Model", "DTO"]],
-];
-
-const architecturePrompts = [
-  (name) => `Tai sao thiet ke ${name} phu hop voi bai dau gia online cua nhom?`,
-  (name) => `Neu bo ${name}, code se kho test hoac de loi o dau?`,
-  (name) => `Hay chi file the hien ro nhat ${name} va giai thich trach nhiem tung layer.`,
-  (name) => `${name} giup thanh vien trong nhom chia viec va bao ve van dap nhu the nao?`,
-  (name) => `Khi co bug, ${name} giup em khoanh vung loi tu UI den DB ra sao?`,
-];
-
-for (let i = 0; i < 55; i += 1) {
-  const [concept, names, explanation, tags] = architectureConcepts[i % architectureConcepts.length];
-  const matched = matchFiles(names);
-  addQuestion("Design", {
-    level: i % 4 === 0 ? "Defense" : "Kien truc",
-    topic: concept,
-    question: architecturePrompts[Math.floor(i / architectureConcepts.length) % architecturePrompts.length](concept),
-    answer: `${concept}: ${explanation} Trong repo, mo cac file ${fileList(matched)}. Khi tra loi, noi nguyen ly truoc, sau do noi code ap dung, cuoi cung noi loi nao duoc phong tranh.`,
-    intent: "Kiem tra hieu kien truc, khong chi hoc thuoc ten file.",
-    answerBullets: [
-      "Dinh nghia nguyen ly bang mot cau ngan.",
-      "Gan nguyen ly voi file that trong repo.",
-      "Noi loi/rui ro ma thiet ke nay phong tranh.",
-      "Noi test hoac demo nao co the chung minh.",
-    ],
-    mustMention: [concept, ...tags, ...matched.slice(0, 2).map((file) => file.path)],
-    commonMistakes: [
-      "Tra loi ly thuyet chung chung nhung khong chi duoc file.",
-      "Gom controller, service va DAO thanh mot vai tro.",
-      "Khong noi tradeoff hoac loi neu thiet ke bi pha.",
-    ],
-    filePath: primaryPath(matched),
-    lineRefs: refsFromFiles(matched),
-    followUps: [
-      "Trong repo co file nao vi pham nhe nguyen ly nay khong?",
-      "Neu them tinh nang moi, em sua layer nao truoc?",
-      "Nguyen ly nay lien quan SOLID nao?",
-    ],
-    tags: ["Architecture", ...tags],
-  });
-}
-
-const patternConcepts = [
-  ["Factory Method", ["ItemFactory.java", "ItemFactoryTest.java", "ItemType.java"], "ItemFactory tao Electronics/Art/Vehicle theo ItemType, giup AuctionService khong phai biet tung constructor.", ["Factory", "OCP", "SRP"]],
-  ["Observer", ["NotificationService.java", "SubscriptionRequestHandler.java", "SocketClient.java"], "NotificationService giu subscribers va broadcast event realtime cho client dang quan sat auction.", ["Observer", "Realtime", "Event"]],
-  ["Singleton", ["Database.java", "JsonMapper.java", "NotificationService.java", "SessionManager.java", "AuctionLockManager.java"], "Cac tai nguyen chia se co getInstance de thong nhat cau hinh va registry.", ["Singleton", "Shared resource"]],
-  ["DAO/Repository", ["UserDao.java", "AuctionDao.java", "SQLiteAuctionDao.java", "SQLiteBidDao.java"], "DAO interface che SQL, service lam viec voi abstraction thay vi query truc tiep.", ["DAO", "Repository", "DIP"]],
-  ["Dependency Inversion", ["BidService.java", "BidDao.java", "AuctionDao.java", "UserDao.java"], "Service phu thuoc interface DAO, giup test bang fake DAO va thay doi SQLite it anh huong.", ["DIP", "SOLID", "Testability"]],
-  ["Single Responsibility", ["AuctionListController.java", "AuctionClientService.java", "AuctionService.java", "SQLiteAuctionDao.java"], "Controller lo UI, client service lo protocol, server service lo rule, DAO lo SQL.", ["SRP", "SOLID", "Layer"]],
-  ["Open/Closed", ["ItemFactory.java", "Item.java", "Electronics.java", "Art.java", "Vehicle.java"], "Them loai item nen mo rong subclass/factory mapping thay vi sua toan bo luong dau gia.", ["OCP", "SOLID", "Inheritance"]],
-  ["Liskov Substitution", ["Item.java", "Electronics.java", "Art.java", "Vehicle.java", "ModelInheritanceTest.java"], "Cac subclass Item phai dung duoc o noi code mong doi Item.", ["LSP", "SOLID", "OOP"]],
-  ["Interface Segregation", ["BidDao.java", "AuctionDao.java", "UserDao.java", "AutoBidDao.java", "ItemDao.java"], "DAO tach theo aggregate giup service chi phu thuoc nhom method can dung.", ["ISP", "SOLID", "DAO"]],
-];
-
-const patternPrompts = [
-  (name) => `Project dung ${name} o dau, va no giai quyet van de thiet ke nao?`,
-  (name) => `Neu khong dung ${name}, code se bi lap hoac coupling nhu the nao?`,
-  (name) => `Hay giai thich ${name} bang file that, khong chi noi dinh nghia sach giao khoa.`,
-  (name) => `${name} lien quan toi SOLID nao trong project nay?`,
-  (name) => `Khi van dap, em se demo ${name} bang test/file nao?`,
-];
-
-for (let i = 0; i < 45; i += 1) {
-  const [pattern, names, explanation, tags] = patternConcepts[i % patternConcepts.length];
-  const matched = matchFiles(names);
-  addQuestion("Pattern", {
-    level: "Defense",
-    topic: pattern,
-    question: patternPrompts[Math.floor(i / patternConcepts.length) % patternPrompts.length](pattern),
-    answer: `${pattern}: ${explanation} File nen mo: ${fileList(matched)}. Cau tra loi tot phai noi pattern nay lam giam coupling/tang testability/tang kha nang mo rong o diem nao.`,
-    intent: "Kiem tra kha nang nhan dien design pattern va SOLID trong code that.",
-    answerBullets: [
-      "Noi ten pattern/principle.",
-      "Chi file va line neo.",
-      "Noi van de no giai quyet.",
-      "Noi tradeoff hoac rui ro neu dung sai.",
-    ],
-    mustMention: [pattern, ...tags, ...matched.slice(0, 2).map((file) => file.path)],
-    commonMistakes: [
-      "Noi pattern theo dinh nghia tren mang nhung khong gan code.",
-      "Nhan nham DAO voi DTO hoac Observer voi polling.",
-      "Khong noi loi thiet ke neu bo pattern.",
-    ],
-    filePath: primaryPath(matched),
-    lineRefs: refsFromFiles(matched),
-    followUps: [
-      "Pattern nay co lam code phuc tap hon khong?",
-      "Co the thay bang cach don gian hon khong?",
-      "Neu them feature moi, pattern nay giup sua it file nao?",
-    ],
-    tags: ["Pattern", "SOLID", ...tags],
-  });
-}
-
-const debugConcepts = [
-  ["race condition khi hai bidder dat gia", ["BidService.java", "AuctionLockManager.java", "LockRegistry.java", "BidServiceConcurrencyTest.java"], "Khong lock theo auction co the lam hai request cung doc current price cu va ghi de nhau.", ["Race condition", "Concurrency", "Lost update"]],
-  ["transaction rollback khi bid persistence fail", ["BidService.java", "Database.java", "BidServiceTransactionTest.java"], "Neu insert bid loi, wallet/auction phai rollback de khong mat tien hoac sai current price.", ["Transaction", "Rollback", "ACID"]],
-  ["disconnect socket khi dang subscribe", ["ClientHandler.java", "NotificationService.java", "SocketClient.java", "ClientHandlerIntegrationTest.java"], "Server phai unsubscribe writer khi socket disconnect de tranh gui vao connection chet.", ["Socket", "Disconnect", "Realtime"]],
-  ["request sai role", ["RequestRouter.java", "SessionManager.java", "RequestRouterAuthorizationTest.java"], "Router/server phai chan message type theo role, khong tin UI an nut.", ["Authorization", "Role", "Security"]],
-  ["malformed JSON/request", ["ClientHandler.java", "JsonMapper.java", "Response.java"], "ClientHandler phai parse an toan va tra Response error thay vi crash thread.", ["Protocol", "JSON", "Error handling"]],
-  ["stale UI sau realtime event", ["SocketClient.java", "NotificationManager.java", "AuctionDetailController.java", "BidTimeline.java"], "Client can lang nghe event va cap nhat UI thread dung cach.", ["JavaFX", "Realtime", "UI state"]],
-  ["scheduler settlement fail", ["AuctionManagerService.java", "AuctionDao.java", "AuctionManagerServiceTest.java"], "Settlement loi tam thoi phai luu attempts/nextRetryAt de retry thay vi danh dau PAID sai.", ["Scheduler", "Retry", "Settlement"]],
-  ["wallet insufficient funds", ["WalletService.java", "BidService.java", "BidServiceTest.java"], "Server service phai check balance/locked funds truoc khi chap nhan bid.", ["Wallet", "Business rule", "Validation"]],
-  ["image/asset URL sai", ["AssetServer.java", "ImageUrlUtil.java", "AuctionRequestHandler.java"], "Anh upload duoc serve qua HTTP asset server, client can normalize URL.", ["HTTP", "Asset", "Client"]],
-];
-
-const debugPrompts = [
-  (name) => `Neu bug ${name} xay ra trong demo, em trace tu dau va mong doi log/file nao thay doi?`,
-  (name) => `Tai sao ${name} la loi nguy hiem trong he thong dau gia?`,
-  (name) => `Code hien tai phong tranh ${name} bang co che nao?`,
-  (name) => `Neu test cho ${name} fail, em doc file nao truoc?`,
-  (name) => `Hay dua ra mot cach tai hien ${name} bang thao tac UI hoac unit test.`,
-];
-
-for (let i = 0; i < 45; i += 1) {
-  const [debugName, names, explanation, tags] = debugConcepts[i % debugConcepts.length];
-  const matched = matchFiles(names);
-  addQuestion("Debug", {
-    level: "Debug",
-    topic: debugName,
-    question: debugPrompts[Math.floor(i / debugConcepts.length) % debugPrompts.length](debugName),
-    answer: `${debugName}: ${explanation} Trace nen mo ${fileList(matched)}. Khi tra loi, noi trieu chung nguoi dung thay, server/client lam gi, invariant nao phai giu va test nao bao ve.`,
-    intent: "Kiem tra nang luc debug, khong chi doc code thuan tuy.",
-    answerBullets: [
-      "Mo ta symptom tren UI/server.",
-      "Khoanh vung layer nghi ngo.",
-      "Chi co che phong tranh trong code.",
-      "Noi test/manual case tai hien loi.",
-    ],
-    mustMention: [debugName, ...tags, ...matched.slice(0, 2).map((file) => file.path)],
-    commonMistakes: [
-      "Do loi cho UI trong khi rule nam o server.",
-      "Khong noi invariant can giu sau loi.",
-      "Bo qua log/test da co san.",
-    ],
-    filePath: primaryPath(matched),
-    lineRefs: refsFromFiles(matched),
-    followUps: [
-      "Neu loi chi xay ra khi nhieu client cung bid thi test nao can chay?",
-      "Sau khi fix, em can verify bang manual case nao?",
-      "Thong bao loi nen hien o client hay log server?",
-    ],
-    tags: ["Debug", ...tags],
-  });
-}
-
-const testingConcepts = [
-  ["BidServiceConcurrencyTest", ["BidServiceConcurrencyTest.java", "ConcurrentBidTest.java", "BidService.java"], "Chung minh nhieu bid song song khong gay lost update.", ["Concurrency", "JUnit", "Service test"]],
-  ["BidServiceTransactionTest", ["BidServiceTransactionTest.java", "Database.java", "BidService.java"], "Dung failing DAO de chung minh rollback khi persistence fail.", ["Transaction", "Rollback", "Fake DAO"]],
-  ["RequestRouterAuthorizationTest", ["RequestRouterAuthorizationTest.java", "RequestRouter.java", "SessionManager.java"], "Chung minh server chan request sai role.", ["Authorization", "Router", "Security"]],
-  ["ClientHandlerIntegrationTest", ["ClientHandlerIntegrationTest.java", "ClientHandler.java", "NotificationService.java"], "Test socket integration, subscribe/unsubscribe va response JSON.", ["Socket", "Integration test", "Realtime"]],
-  ["ItemFactoryTest", ["ItemFactoryTest.java", "ItemFactory.java", "ItemType.java"], "Chung minh Factory tao dung subclass item.", ["Factory", "OOP", "Unit test"]],
-  ["DAO SQLite tests", ["SQLiteAuctionDaoTest.java", "SQLiteBidDaoTest.java", "SQLiteUserDaoTest.java"], "Kiem tra SQL mapping voi SQLite that.", ["DAO", "SQLite", "Persistence test"]],
-  ["Client util tests", ["BidTimelineTest.java", "AuctionStatusUiTest.java", "SocketClientIntegrationTest.java"], "Kiem tra logic hien thi/timeline/socket phia client.", ["Client", "UI logic", "Integration"]],
-];
-
-for (let i = 0; i < 35; i += 1) {
-  const [testName, names, explanation, tags] = testingConcepts[i % testingConcepts.length];
-  const matched = matchFiles(names);
-  addQuestion("Test", {
-    level: "Demo",
-    topic: testName,
-    question: `Neu giang vien hoi test ${testName} chung minh dieu gi, em se giai thich arrange-act-assert nhu the nao?`,
-    answer: `${testName}: ${explanation} Mo file ${fileList(matched)}. Tra loi theo Arrange-Act-Assert: du lieu dau vao, hanh dong goi service/socket/DAO, va invariant/assert cuoi cung.`,
-    intent: "Kiem tra kha nang doc test de bao ve behavior, khong chi chay lenh test.",
-    answerBullets: [
-      "Noi test setup du lieu gi.",
-      "Noi action goi class/method nao.",
-      "Noi assert bao ve rule nao.",
-      "Noi neu test fail thi tinh nang nao co nguy co hong.",
-    ],
-    mustMention: [testName, ...tags],
-    commonMistakes: [
-      "Chi noi test pass/fail ma khong noi behavior.",
-      "Khong phan biet unit test voi integration test.",
-      "Quen noi test lien quan manual demo nao.",
-    ],
-    filePath: primaryPath(matched),
-    lineRefs: refsFromFiles(matched),
-    followUps: [
-      "Lenh Maven nao chay rieng test nay?",
-      "Test nay co dung mock/fake hay SQLite that?",
-      "Manual case nao tuong ung voi test nay?",
-    ],
-    tags: ["Test", ...tags],
-  });
-}
-
-const roleConcepts = [
-  ["Bidder boundary", ["BidService.java", "WalletService.java", "LiveBiddingController.java", "RequestRouter.java"], "Bidder duoc xem/dau gia/nap vi, nhung khong duoc sua auction cua seller hay admin action.", ["Bidder", "Role", "Authorization"]],
-  ["Seller boundary", ["CreateAuctionController.java", "AuctionService.java", "EditAuctionController.java", "RequestRouter.java"], "Seller tao/sua/huy auction cua minh trong dieu kien server cho phep.", ["Seller", "Owner", "Business rule"]],
-  ["Admin boundary", ["AdminPanelController.java", "AdminRequestHandler.java", "RequestRouter.java", "SQLiteUserDao.java"], "Admin quan ly user/auction va phai bi chan voi token khong phai ADMIN.", ["Admin", "Role", "Security"]],
-  ["Session and ownership", ["SessionManager.java", "AuthService.java", "RequestRouter.java"], "Token xac dinh userId; service can kiem owner/resource rieng.", ["Session", "Authentication", "Authorization"]],
-  ["Wallet and settlement", ["WalletService.java", "AuctionManagerService.java", "AuctionSettlementTest.java"], "Tien bidder/seller phai xu ly dung khi bid, refund, settlement va retry.", ["Wallet", "Settlement", "Business rule"]],
-];
-
-for (let i = 0; i < 20; i += 1) {
-  const [roleName, names, explanation, tags] = roleConcepts[i % roleConcepts.length];
-  const matched = matchFiles(names);
-  addQuestion("Role", {
-    level: "Hoi xoay",
-    topic: roleName,
-    question: `Voi ${roleName}, server phai dam bao rule nao de khong mat diem phan role/bao mat?`,
-    answer: `${roleName}: ${explanation} Can mo ${fileList(matched)}. Tra loi theo thu tu: UI co the an/hien nut, nhung server moi kiem token/role/owner va service moi quyet dinh business rule.`,
-    intent: "Kiem tra kha nang phan biet UI permission va server authorization.",
-    answerBullets: [
-      "Noi role duoc lam gi.",
-      "Noi role bi cam lam gi.",
-      "Noi server check o dau.",
-      "Noi test/manual case can demo.",
-    ],
-    mustMention: [roleName, "server authorization", ...tags],
-    commonMistakes: [
-      "Cho rang UI an nut la du bao mat.",
-      "Khong noi owner/resource check.",
-      "Quen wallet/settlement la rule server.",
-    ],
-    filePath: primaryPath(matched),
-    lineRefs: refsFromFiles(matched),
-    followUps: [
-      "Neu bidder gui request admin bang tool rieng thi server xu ly sao?",
-      "UI can hien thong bao gi khi bi Unauthorized?",
-      "Test nao bao ve role nay?",
-    ],
-    tags: ["Role", "Security", ...tags],
-  });
-}
-
-const anchorFiles = codeFiles.filter((file) =>
-  ["Server Service", "Socket/Handler", "JavaFX Controller", "SQLite DAO", "DAO Interface", "Protocol", "Factory", "Concurrency", "Test"].includes(file.layer),
-);
-let anchorIndex = 0;
-while (questions.length < 300) {
-  const file = anchorFiles[anchorIndex % anchorFiles.length] ?? codeFiles[anchorIndex % codeFiles.length];
-  const anchors = [...file.declarations, ...file.methods, ...file.importantLines].filter(Boolean);
-  const anchor = anchors[anchorIndex % Math.max(anchors.length, 1)] ?? {
-    line: 1,
-    code: path.basename(file.path),
-    explain: file.summary,
-  };
-  const ref = {
-    line: anchor.line,
-    code: anchor.code,
-    explain: anchor.explain ?? lineExplain(anchor.code, file.layer),
-  };
-  addQuestion("Line code", {
-    level: file.layer.includes("Test") ? "Test" : file.layer.includes("Service") ? "Hoi xoay" : "Code",
-    topic: `${file.layer} line ${ref.line}`,
-    question: `Vì sao line ${ref.line} trong ${file.path} quan trọng trong luồng chạy, và nếu sửa sai thì rủi ro gì?`,
-    answer: `Line ${ref.line}: ${ref.code}. Y nghia: ${ref.explain}. File nay thuoc ${file.layer}; trach nhiem chinh: ${file.summary}. Tra loi tot la noi input, output, ai goi no, va loi se lan ra UI/server/test nao.`,
-    intent: "Kiem tra doc code co ngu canh, khong phai chi dich tung dong.",
-    answerBullets: [
-      "Doc dung line va file.",
-      "Noi trach nhiem file trong layer.",
-      "Noi line lien quan luong nao.",
-      "Noi rui ro neu sua sai.",
-    ],
-    mustMention: [file.path, `line ${ref.line}`, file.layer],
-    commonMistakes: [
-      "Chi doc lai cu phap Java.",
-      "Khong noi ai goi line nay.",
-      "Khong noi test/manual case lien quan.",
-    ],
-    filePath: file.path,
-    lineRefs: [ref],
-    followUps: [
-      "Line nay lien he gi voi yeu cau de bai?",
-      "Neu doi line nay thi can chay test nao?",
-      "Loi o day hien ra client nhu the nao?",
-    ],
-    tags: ["Line code", file.layer, file.module],
-  });
-  anchorIndex += 1;
-}
-
-const manualCases = [];
-const fxmlFiles = codeFiles.filter((file) => file.layer === "FXML View" && file.fxml);
-
-for (const file of fxmlFiles) {
-  const controller = controllerByClass.get(file.fxml.controller);
-  for (const action of file.fxml.actions) {
-    const controllerMethod = controller?.methods.find((method) => method.name === action.action);
-    manualCases.push({
-      id: `ui-${manualCases.length + 1}`,
-      title: `${path.basename(file.path, ".fxml")} - ${action.action}`,
-      screen: file.path,
-      role: inferRoleFromName(file.path + action.action),
-      steps: [
-        `Mở màn ${path.basename(file.path, ".fxml")}.`,
-        `Thực hiện control có onAction ${action.action}.`,
-        "Quan sát message, table, form hoặc navigation sau thao tác.",
-      ],
-      expected: "UI không crash; controller validate input, gọi service/client socket hoặc đổi scene đúng.",
-      executionPath: [
-        { path: file.path, line: action.line, code: action.code, explain: "FXML gắn button/control với method controller." },
-        controllerMethod
-          ? {
-              path: controller.path,
-              line: controllerMethod.line,
-              code: controllerMethod.code,
-              explain: "Controller method chạy khi user thao tác trên giao diện.",
-            }
-          : null,
-      ].filter(Boolean),
+  const importantLines = [];
+  if (controller && controllerLine) {
+    importantLines.push({
+      line: controllerLine,
+      code: `fx:controller="${controller}"`,
     });
   }
+  for (const action of actions.slice(0, 8)) {
+    importantLines.push({
+      line: action.line,
+      code: action.code,
+    });
+  }
+
+  return {
+    controller,
+    controllerLine,
+    actions,
+    importantLines,
+  };
 }
 
-const curatedManual = [
-  ["Login thành công", "Bidder/Seller/Admin", ["Nhập username/password", "Bấm Login", "Kiểm sidebar và topbar role/balance"], ["LoginView.fxml", "LoginController.java", "AuthClientService.java", "SocketClient.java", "AuthRequestHandler.java", "AuthService.java"]],
-  ["Register bidder/seller", "Guest", ["Chọn role", "Nhập full name, username, password", "Bấm Create Account"], ["RegisterView.fxml", "RegisterController.java", "RegisterRequest.java", "AuthRequestHandler.java", "SQLiteUserDao.java"]],
-  ["Refresh auction list", "Bidder", ["Mở Auction List", "Bấm Refresh hoặc reload màn", "Kiểm card auction"], ["AuctionListView.fxml", "AuctionListController.java", "AuctionClientService.java", "AuctionRequestHandler.java", "AuctionService.java"]],
-  ["Mở detail auction", "Bidder", ["Chọn auction trong list", "Mở detail", "Kiểm giá hiện tại, seller, end time, bid history"], ["AuctionDetailView.fxml", "AuctionDetailController.java", "AuctionDetailDto.java", "BidTimeline.java"]],
-  ["Place bid hợp lệ", "Bidder", ["Mở auction ACTIVE", "Nhập giá cao hơn current price", "Bấm Place Bid"], ["AuctionDetailController.java", "PlaceBidRequest.java", "BidRequestHandler.java", "BidService.java", "SQLiteBidDao.java", "NotificationService.java"]],
-  ["Place bid lỗi thiếu tiền", "Bidder", ["Đặt bid cao hơn available balance", "Bấm Place Bid", "Đọc lỗi"], ["WalletService.java", "BidService.java", "InsufficientFundsException.java", "Response.java"]],
-  ["Auto-bid dưới max", "Bidder", ["Cấu hình maxBid", "Bidder khác bid thấp hơn max", "Quan sát hệ thống tự phản hồi"], ["LiveBiddingController.java", "SetAutoBidRequest.java", "BidService.java", "SQLiteAutoBidDao.java"]],
-  ["Anti-sniping kéo dài giờ", "Bidder", ["Tạo auction gần hết giờ", "Bid trong cửa sổ cuối", "Quan sát countdown tăng"], ["BidService.java", "AuctionService.java", "BidUpdateEvent.java", "NotificationService.java"]],
-  ["Wallet quick deposit", "Bidder", ["Mở Wallet", "Bấm 50/100/500 USD", "Kiểm balance/available"], ["WalletView.fxml", "WalletController.java", "WalletClientService.java", "WalletRequestHandler.java", "WalletService.java"]],
-  ["Withdraw vượt available", "Bidder", ["Nhập amount lớn hơn available", "Bấm Withdraw", "Đọc message lỗi"], ["WalletController.java", "WalletService.java", "InsufficientFundsException.java"]],
-  ["Seller tạo auction", "Seller", ["Mở Seller Center", "Bấm Create Auction", "Nhập item + time + price + image", "Submit"], ["SellerCenterView.fxml", "CreateAuctionView.fxml", "CreateAuctionController.java", "AuctionService.java", "ItemFactory.java"]],
-  ["Seller xem stats", "Seller", ["Mở Seller Center", "Bấm Refresh", "So sánh Expected/Total revenue"], ["SellerCenterController.java", "SellerStatsDto.java", "AuctionService.java", "SQLiteAuctionDao.java"]],
-  ["Admin refresh dashboard", "Admin", ["Mở Admin Panel", "Bấm Refresh", "Kiểm user/auction stats"], ["AdminPanelView.fxml", "AdminPanelController.java", "AdminClientService.java", "AdminRequestHandler.java"]],
-  ["Admin disable user", "Admin", ["Chọn user", "Bấm Disable", "Kiểm status đổi"], ["AdminPanelController.java", "UpdateUserStatusRequest.java", "AdminRequestHandler.java", "SQLiteUserDao.java"]],
-  ["Admin cancel auction", "Admin", ["Chọn auction đang chạy", "Bấm Cancel", "Kiểm event/status"], ["AdminPanelController.java", "AdminRequestHandler.java", "AuctionService.java", "NotificationService.java"]],
-  ["Mất kết nối socket", "Client", ["Tắt server khi client đang mở", "Quan sát disconnected banner", "Logout/login lại"], ["AppShell.fxml", "AppShellController.java", "SocketClient.java", "ConnectionState.java"]],
-];
+function toControllerPath(controllerName) {
+  if (!controllerName) return null;
+  const relativeJava = `${controllerName.replaceAll(".", "/")}.java`;
+  if (relativeJava.includes("/client/")) {
+    return `auction-client/src/main/java/${relativeJava}`;
+  }
+  if (relativeJava.includes("/server/")) {
+    return `auction-server/src/main/java/${relativeJava}`;
+  }
+  if (relativeJava.includes("/common/")) {
+    return `auction-common/src/main/java/${relativeJava}`;
+  }
+  return null;
+}
 
-for (const [title, role, steps, names] of curatedManual) {
-  const matched = codeFiles.filter((file) => names.some((name) => file.path.endsWith(name)));
-  manualCases.push({
-    id: `manual-${manualCases.length + 1}`,
-    title,
-    screen: matched[0]?.path ?? "",
-    role,
-    steps,
-    expected: `Khi ${title}, UI phải phản hồi rõ, server trả Response đúng và dữ liệu/event khớp với rule nghiệp vụ.`,
-    executionPath: matched
-      .map((file) => {
-        const ref = file.importantLines[0] ?? file.methods[0] ?? file.declarations[0];
-        return ref ? { path: file.path, line: ref.line, code: ref.code, explain: ref.explain ?? lineExplain(ref.code, file.layer) } : null;
-      })
-      .filter(Boolean),
+function findLineRefs(file, patterns, fallbackCount = 3) {
+  if (!file) return [];
+  const pool = file.importantLines.length ? file.importantLines : file.methods.map((method) => ({
+    line: method.line,
+    code: method.code,
+    explain: `Method ${method.name} là điểm vào thực thi của file.`,
+  }));
+  if (!pool.length) return [];
+
+  const normalizedPatterns = patterns.map((pattern) => pattern.toLowerCase());
+  const exact = pool.filter((entry) => normalizedPatterns.some((pattern) => `${entry.code} ${entry.explain}`.toLowerCase().includes(pattern)));
+  const selected = exact.length ? exact : pool.slice(0, fallbackCount);
+  return selected.slice(0, fallbackCount).map((entry) => ({
+    line: entry.line,
+    code: entry.code,
+    explain: entry.explain,
+  }));
+}
+
+function unique(values) {
+  return [...new Set(values)];
+}
+
+function buildManualCases(codeFiles) {
+  const fileMap = new Map(codeFiles.map((file) => [file.path, file]));
+  const fxmlFiles = codeFiles.filter((file) => file.layer === "FXML View");
+  const cases = [];
+
+  for (const file of fxmlFiles) {
+    const screen = path.basename(file.path, path.extname(file.path));
+    const role = roleForScreen(screen);
+    const controllerPath = toControllerPath(file.fxml?.controller ?? null);
+    const controllerFile = controllerPath ? fileMap.get(controllerPath) : null;
+
+    for (const action of file.fxml?.actions ?? []) {
+      const controllerMethod = controllerFile?.methods.find((method) => method.name === action.action);
+      const actionPath = controllerPath ?? file.path;
+      const steps = manualStepsFor(screen, action.action);
+      const expected = manualExpectedFor(screen, action.action);
+      const executionPath = [
+        {
+          path: file.path,
+          line: action.line,
+          code: action.code,
+          explain: "UI action trong FXML kích hoạt controller method khi người dùng bấm nút.",
+        },
+      ];
+
+      if (controllerFile && controllerMethod) {
+        executionPath.push({
+          path: controllerFile.path,
+          line: controllerMethod.line,
+          code: controllerMethod.code,
+          explain: "Controller method thật xử lý event hoặc điều hướng flow.",
+        });
+      }
+
+      const actionRefs = controllerFile
+        ? findLineRefs(controllerFile, [action.action, "Action.", "ClientRequest", "ClientResponse", "FXMLLoader", "Platform.runLater"], 3)
+        : [];
+      for (const ref of actionRefs) {
+        executionPath.push({
+          path: actionPath,
+          line: ref.line,
+          code: ref.code,
+          explain: ref.explain,
+        });
+      }
+
+      cases.push({
+        id: `${screen}-${action.action}`.toLowerCase(),
+        title: manualTitleFor(screen, action.action),
+        screen,
+        role,
+        steps,
+        expected,
+        executionPath: dedupeLineRefs(executionPath),
+      });
+    }
+  }
+
+  return cases.sort((a, b) => a.id.localeCompare(b.id));
+}
+
+function roleForScreen(screen) {
+  if (screen.includes("admin")) return "Admin";
+  if (screen.includes("seller") || screen.includes("create_item")) return "Seller";
+  if (screen.includes("auction")) return "Bidder";
+  return "Guest";
+}
+
+function manualTitleFor(screen, action) {
+  const screenName = screen.replaceAll("_", " ");
+  const map = {
+    handleLogin: "Login flow async + route theo role",
+    handleRegister: "Register flow tạo ClientRequest(Action.REGISTER)",
+    handlePlaceBid: "Place bid gửi socket request và cập nhật realtime",
+    handleCreateItem: "Seller tạo item và lên lịch auction",
+    handleChooseImage: "Seller chọn ảnh cho item trước khi gửi request",
+    handleLogout: "Điều hướng logout về màn login",
+    handleRefresh: "Refresh UI hoặc reload danh sách",
+    goBack: "Điều hướng quay lại màn trước",
+  };
+  return `${screenName}: ${map[action] ?? action}`;
+}
+
+function manualStepsFor(screen, action) {
+  if (action === "handleLogin") {
+    return [
+      "Mở login screen, nhập username/password hợp lệ.",
+      "Bấm Login và quan sát label chuyển sang trạng thái đang xử lý.",
+      "Xác nhận client gửi request async, nhận ClientResponse rồi route theo role BIDDER/SELLER/ADMIN.",
+    ];
+  }
+  if (action === "handleRegister") {
+    return [
+      "Mở register screen, nhập username/password/email và chọn role BIDDER hoặc SELLER.",
+      "Bấm Register và quan sát status label đổi màu theo success hoặc error.",
+      "Kiểm tra server trả message đúng khi duplicate username hoặc role không hợp lệ.",
+    ];
+  }
+  if (action === "handlePlaceBid") {
+    return [
+      "Mở auction detail của một phiên đang RUNNING.",
+      "Nhập số tiền bid rồi bấm Place Bid.",
+      "Quan sát current price/time label đổi theo ClientResponse hoặc push realtime.",
+    ];
+  }
+  if (action === "handleCreateItem") {
+    return [
+      "Đăng nhập seller và mở màn create item.",
+      "Nhập tên, giá, loại, thời lượng; tùy chọn chọn ảnh rồi bấm tạo.",
+      "Xác nhận item được tạo và server tự lên lịch start/end cho auction liên kết.",
+    ];
+  }
+  if (action === "handleChooseImage") {
+    return [
+      "Mở create item screen.",
+      "Bấm nút chọn ảnh và chọn một file hợp lệ.",
+      "Quan sát đường dẫn được đổ vào text field trước khi gửi CreateItemRequest.",
+    ];
+  }
+  if (action === "handleLogout") {
+    return [
+      `Mở màn ${screen.replaceAll("_", " ")} sau khi đã đăng nhập.`,
+      "Bấm Logout.",
+      "Xác nhận scene chuyển về login.fxml mà không gọi business flow server.",
+    ];
+  }
+  if (action === "goBack") {
+    return [
+      `Mở màn ${screen.replaceAll("_", " ")}.`,
+      "Bấm nút Back hoặc Cancel.",
+      "Xác nhận FXMLLoader nạp lại scene trước đó thay vì giữ state màn hiện tại.",
+    ];
+  }
+  if (action === "handleRefresh") {
+    return [
+      `Mở màn ${screen.replaceAll("_", " ")}.`,
+      "Bấm Refresh.",
+      "Kiểm tra UI thông báo reload hoặc thực hiện lại flow lấy dữ liệu.",
+    ];
+  }
+  return [
+    `Mở màn ${screen.replaceAll("_", " ")}.`,
+    `Kích hoạt action ${action}.`,
+    "Quan sát status/scene thay đổi và đối chiếu với line refs tương ứng trong controller.",
+  ];
+}
+
+function manualExpectedFor(screen, action) {
+  if (action === "handleLogin") {
+    return "Login success phải set currentUser rồi route sang auction_list/seller_dashboard/admin; login fail phải giữ nguyên màn và hiện message.";
+  }
+  if (action === "handleRegister") {
+    return "Client phải tạo ClientRequest(Action.REGISTER), server validate trên UserService và trả ClientResponse với message rõ ràng.";
+  }
+  if (action === "handlePlaceBid") {
+    return "Bid hợp lệ phải cập nhật giá hiện tại; bid lỗi phải trả message từ server; push NEW_BID/AUCTION_ENDED phải phản ánh đúng trên UI.";
+  }
+  if (action === "handleCreateItem") {
+    return "Create item success phải sinh item và auction tương ứng, đồng thời scheduler được lên lịch theo durationMinutes.";
+  }
+  if (action === "handleChooseImage") {
+    return "Đường dẫn file được giữ ở UI để chèn vào extraAttributes khi tạo item; không có server call ở bước này.";
+  }
+  if (action === "handleLogout" || action === "goBack") {
+    return "FXMLLoader phải chuyển đúng scene mục tiêu; flow này chủ yếu là UI navigation chứ không thay đổi business state.";
+  }
+  return `Action ${action} trên màn ${screen} phải phản hồi đúng với trạng thái UI và line code tương ứng.`;
+}
+
+function dedupeLineRefs(refs) {
+  const seen = new Set();
+  return refs.filter((ref) => {
+    const key = `${ref.path ?? ""}:${ref.line}:${ref.code}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
   });
 }
 
-function inferRoleFromName(text) {
-  const lower = text.toLowerCase();
-  if (lower.includes("admin")) return "Admin";
-  if (lower.includes("seller") || lower.includes("auction") || lower.includes("create")) return "Seller/Bidder";
-  if (lower.includes("wallet") || lower.includes("bid")) return "Bidder";
-  if (lower.includes("login") || lower.includes("register")) return "Guest";
-  return "All roles";
+function buildQuestionBank(codeFiles) {
+  const fileMap = new Map(codeFiles.map((file) => [file.path, file]));
+  const questions = [];
+  const questionSpecs = [
+    {
+      id: "action-contract",
+      level: "Cơ bản",
+      topic: "Action enum và contract request",
+      tags: ["Flow", "Design", "Line code"],
+      filePath: "auction-common/src/main/java/com/auction/common/message/Action.java",
+      patterns: ["enum Action", "REGISTER", "PLACE_BID", "REMOVE_AUTO_BID"],
+      question: "Vì sao `Action.java` là file phải mở đầu tiên khi giải thích client-server flow của dự án này?",
+      intent: "Buộc người học nói đúng contract socket: request không tự route theo tên class mà theo Action.",
+      answer: "Action là bảng lệnh chung giữa client và server. ClientRequest chỉ mang hai thứ: Action và payload Serializable. Ở phía server, ClientHandler đọc request rồi switch theo Action để chọn đúng handler/service. Vì vậy khi giải thích bất kỳ luồng nào như REGISTER, LOGIN hay PLACE_BID, mở Action trước sẽ cho thấy hệ thống hỗ trợ lệnh nào thật sự có trong source, tránh kể thêm flow không tồn tại trong nhánh hiện tại.",
+      answerBullets: [
+        "Nói Action là source of truth cho command list đi qua socket.",
+        "Nối sang ClientRequest và ClientHandler switch(action).",
+        "Chỉ rõ mọi flow đều phải map về một Action cụ thể.",
+      ],
+      mustMention: ["Action", "ClientRequest", "ClientHandler", "switch(action)"],
+      commonMistakes: [
+        "Nhầm Action với endpoint REST hoặc JSON route.",
+        "Kể feature không có enum tương ứng trong source hiện tại.",
+      ],
+      followUps: [
+        "Nếu thêm action mới mà quên update ClientHandler thì chuyện gì xảy ra?",
+        "Action nào liên quan tới auto-bid trong source hiện tại?",
+      ],
+    },
+    {
+      id: "request-response-wrapper",
+      level: "Cơ bản",
+      topic: "ClientRequest / ClientResponse wrapper",
+      tags: ["Flow", "Design", "Line code"],
+      filePath: "auction-common/src/main/java/com/auction/common/message/ClientRequest.java",
+      patterns: ["private final Action action", "private final Serializable payload", "ClientResponse"],
+      question: "Giải thích vì sao dự án dùng `ClientRequest` và `ClientResponse` thay vì để từng controller gửi object tuỳ ý qua socket.",
+      intent: "Kiểm tra người học hiểu contract thống nhất và lợi ích của wrapper khi debug cũng như mở rộng action.",
+      answer: "Wrapper tạo ra một contract ổn định cho toàn hệ thống. Mọi request đều có Action + payload nên server có thể route chung ở ClientHandler. Mọi response đều có success, message và data nên client xử lý UI thống nhất mà không phải đoán kiểu object đọc từ stream. Điều này đặc biệt quan trọng với raw socket + serialization vì hai phía phải thống nhất 100% về class và field.",
+      answerBullets: [
+        "Nói rõ Action + payload ở request, success/message/data ở response.",
+        "Giải thích raw socket cần contract cứng hơn vì không có HTTP layer hỗ trợ.",
+        "Nêu lợi ích khi debug và mở rộng action mới.",
+      ],
+      mustMention: ["Serializable", "Action", "success/message/data", "ClientHandler"],
+      commonMistakes: [
+        "Nói wrapper chỉ để đẹp code.",
+        "Quên lý do hai phía phải đồng bộ class khi dùng serialization.",
+      ],
+      followUps: [
+        "Nếu payload không Serializable thì lỗi sẽ xảy ra ở đâu?",
+        "Vì sao docs nhấn mạnh không tạo duplicate request class ở client/server?",
+      ],
+    },
+    {
+      id: "network-client-socket",
+      level: "Trung bình",
+      topic: "NetworkClient và listener thread",
+      tags: ["Flow", "Design", "Debug", "Line code"],
+      filePath: "auction-client/src/main/java/com/auction/client/network/NetworkClient.java",
+      patterns: ["Socket(HOST, PORT)", "BlockingQueue<ClientResponse>", "listenForServerMessages", "pushListeners"],
+      question: "Trong `NetworkClient`, vì sao phải tách `ClientResponse` và `ServerPushMessage` bằng listener thread + queue?",
+      intent: "Kiểm tra hiểu biết về request/response song song với realtime push trên cùng một socket.",
+      answer: "Một kết nối socket đang phải phục vụ hai loại dữ liệu: response cho request đang chờ và push message do server chủ động gửi. Listener thread đọc object liên tục từ ObjectInputStream, nếu là ClientResponse thì đẩy vào responseQueue cho sendRequest lấy ra; nếu là ServerPushMessage thì dispatch tới push listeners. Cách tách này giữ được flow đồng bộ cho request nhưng vẫn không bỏ lỡ realtime update như NEW_BID hay AUCTION_ENDED.",
+      answerBullets: [
+        "Nêu một socket phục vụ cả response và server push.",
+        "Giải thích responseQueue dùng cho sendRequest blocking.",
+        "Giải thích pushListeners dùng cho realtime UI update.",
+      ],
+      mustMention: ["ObjectInputStream", "responseQueue", "listenForServerMessages", "PushListener"],
+      commonMistakes: [
+        "Nói sendRequest tự đọc trực tiếp từ stream mà quên listener thread.",
+        "Không phân biệt ClientResponse với ServerPushMessage.",
+      ],
+      followUps: [
+        "Nếu listener thread dừng thì bid realtime sẽ hỏng biểu hiện như thế nào?",
+        "Vì sao update UI phải quay lại Platform.runLater ở controller?",
+      ],
+    },
+    {
+      id: "login-controller",
+      level: "Cơ bản",
+      topic: "Login flow từ JavaFX tới server",
+      tags: ["Flow", "Debug", "Line code"],
+      filePath: "auction-client/src/main/java/com/auction/client/controller/LoginController.java",
+      patterns: ["handleLogin", "client.loginAsync", "AuthUserData", "FXMLLoader.load"],
+      question: "Kể ngắn gọn luồng Login từ `login.fxml` tới lúc client chuyển màn theo role.",
+      intent: "Buộc người học nối được UI event, request async, response auth và điều hướng màn hình.",
+      answer: "User nhập username/password trên login.fxml rồi bấm nút gắn với handleLogin. Controller kiểm tra rỗng, gọi NetworkClient.connect và loginAsync. Khi ClientResponse success quay về, controller ép kiểu data thành AuthUserData, lưu vào NetworkClient và chọn FXML theo role BIDDER/SELLER/ADMIN. Nếu fail thì chỉ cập nhật errorLabel, không tự kết luận ở client.",
+      answerBullets: [
+        "Bắt đầu từ FXML onAction -> LoginController.handleLogin.",
+        "Nói request gửi async qua NetworkClient.loginAsync.",
+        "Kết thúc bằng AuthUserData + route theo role.",
+      ],
+      mustMention: ["handleLogin", "loginAsync", "AuthUserData", "FXMLLoader"],
+      commonMistakes: [
+        "Nói client tự xác thực thành công mà quên server check password.",
+        "Quên bước setCurrentUser trước khi chuyển màn.",
+      ],
+      followUps: [
+        "Nếu login success nhưng route sai role thì mở file nào trước?",
+        "Server đang hash/check password ở đâu?",
+      ],
+    },
+    {
+      id: "register-policy",
+      level: "Trung bình",
+      topic: "Register flow và policy role",
+      tags: ["Flow", "Design", "Debug", "Test"],
+      filePath: "auction-client/src/main/java/com/auction/client/controller/RegisterController.java",
+      patterns: ["roleBox.setItems", "Action.REGISTER", "RegisterRequest"],
+      question: "Luồng tự đăng ký đang bảo vệ việc không cho người dùng tự tạo ADMIN ở những lớp nào?",
+      intent: "Kiểm tra hiểu cả UI constraint lẫn contract/policy source of truth, đồng thời thấy được nguy cơ mismatch với server.",
+      answer: "Ở client, RegisterController chỉ đưa BIDDER và SELLER vào ComboBox nên UX mặc định không cho chọn ADMIN. Ở docs/contract, RegistrationPolicy mô tả self-registration chỉ cho BIDDER/SELLER. Tuy nhiên câu trả lời tốt phải nói thêm rằng server mới là nơi phải bảo vệ cuối cùng; nếu chỉ chặn ở UI mà UserService vẫn cho ADMIN khi payload được gửi thủ công thì đó là rủi ro contract drift cần nêu ra khi review.",
+      answerBullets: [
+        "Nêu client roleBox chỉ hiển thị BIDDER/SELLER.",
+        "Nêu docs/RegistrationPolicy là source of truth mong muốn.",
+        "Chỉ ra server mới là boundary phải chặn cuối cùng.",
+      ],
+      mustMention: ["RegisterController", "RegisterRequest", "RegistrationPolicy", "UserService.signup"],
+      commonMistakes: [
+        "Tin rằng chặn ở ComboBox là đủ an toàn.",
+        "Không phát hiện drift giữa UI/docs và nhánh server hiện tại.",
+      ],
+      followUps: [
+        "Test nào nên viết để bắt lỗi tự đăng ký ADMIN?",
+        "Nếu payload forged từ client khác gửi lên thì sao?",
+      ],
+    },
+    {
+      id: "client-handler-dispatch",
+      level: "Trung bình",
+      topic: "ClientHandler dispatch",
+      tags: ["Flow", "Design", "Debug", "Line code"],
+      filePath: "auction-server/src/main/java/com/auction/server/handler/ClientHandler.java",
+      patterns: ["handleIncomingRequest", "switch (action)", "case PLACE_BID", "failure("],
+      question: "Vai trò thật của `ClientHandler` trong kiến trúc là gì, và vì sao không nên nhét business rule vào đây?",
+      intent: "Xác nhận người học phân biệt boundary dispatch với service business rule.",
+      answer: "ClientHandler là socket boundary của server. Nó đọc object từ stream, ép kiểu về ClientRequest, kiểm tra action/payload rồi route sang service tương ứng bằng switch(action). Nó có thể trả lỗi format hoặc payload sai kiểu, nhưng không nên mang hết business rule vào đây vì BidService, UserService hay ItemService mới là nơi giữ invariant của domain. Tách như vậy giúp test rõ hơn và tránh logic bị trộn với I/O socket.",
+      answerBullets: [
+        "Mô tả readObject -> ClientRequest -> switch(action).",
+        "Phân biệt lỗi contract/payload với business rule.",
+        "Nối handler tới UserService/ItemService/BidService.",
+      ],
+      mustMention: ["ClientRequest", "switch(action)", "payload validation", "service dispatch"],
+      commonMistakes: [
+        "Gọi ClientHandler là business layer chính.",
+        "Không nói tới payload type-check trước khi service chạy.",
+      ],
+      followUps: [
+        "Nếu payload PLACE_BID sai kiểu thì lỗi được trả ở đâu?",
+        "Vì sao handleRegister gọi executeAuthAction thay vì new response trực tiếp trong mọi nhánh?",
+      ],
+    },
+    {
+      id: "user-service-auth",
+      level: "Trung bình",
+      topic: "BCrypt và auth server-side",
+      tags: ["Flow", "Design", "Debug", "Test"],
+      filePath: "auction-server/src/main/java/com/auction/server/service/UserService.java",
+      patterns: ["BCrypt.hashpw", "BCrypt.checkpw", "findByUsername", "isBanned"],
+      question: "Khi bị hỏi bảo mật đăng nhập, em phải chỉ ra điều gì trong `UserService.java`?",
+      intent: "Buộc người học dùng source thật để chứng minh password không được tin ở client.",
+      answer: "Điểm cần chỉ ra là server mới hash và check password bằng BCrypt. Trong signup, password plain text từ RegisterRequest được hash trước khi lưu User mới. Trong login, repository tìm user theo username rồi BCrypt.checkpw để xác thực; sau đó còn kiểm tra user có bị banned hay không. Như vậy client chỉ gửi raw credential qua socket, còn server là nơi quyết định auth có thành công hay không.",
+      answerBullets: [
+        "Chỉ rõ BCrypt.hashpw ở signup và BCrypt.checkpw ở login.",
+        "Nói thêm banned check sau khi xác thực.",
+        "Nhấn mạnh client không tự quyết định auth result.",
+      ],
+      mustMention: ["BCrypt", "signup", "login", "SerializableUserRepository"],
+      commonMistakes: [
+        "Nói password được mã hóa ở client.",
+        "Quên banned user vẫn có thể bị chặn sau khi check password.",
+      ],
+      followUps: [
+        "Default admin account được seed ở đâu?",
+        "Nếu username trùng thì exception/message sinh ra ở lớp nào?",
+      ],
+    },
+    {
+      id: "item-factory-service",
+      level: "Trung bình",
+      topic: "ItemFactory + ItemService",
+      tags: ["Pattern", "Design", "Flow", "Line code"],
+      filePath: "auction-server/src/main/java/com/auction/server/service/ItemService.java",
+      patterns: ["ItemFactory.createItem", "scheduleAuctionStart", "scheduleAuctionEndAt", "CreateItemRequest"],
+      question: "Tại sao `ItemService.C()` vừa thể hiện Factory Pattern vừa nối thẳng sang auction lifecycle?",
+      intent: "Kiểm tra khả năng nói design pattern nhưng vẫn bám flow thật của source.",
+      answer: "Ở bước tạo item, service không new cứng Electronics/Art/Vehicle mà gọi ItemFactory.createItem theo ItemType, nhờ đó phần chọn subclass được tách khỏi controller. Sau khi item được lưu, service còn tự tạo Auction tương ứng, set start/end time và gọi AuctionScheduler để lên lịch start/end. Vì vậy đây không chỉ là CRUD item mà là điểm khởi tạo luôn một mini lifecycle cho auction gắn với item.",
+      answerBullets: [
+        "Nêu ItemFactory chọn subclass theo ItemType.",
+        "Nêu service tự tạo Auction sau khi save item.",
+        "Nêu scheduler được gọi ngay trong flow create item.",
+      ],
+      mustMention: ["ItemFactory", "CreateItemRequest", "AuctionScheduler", "SerializableItemRepository"],
+      commonMistakes: [
+        "Nói create item và create auction là hai flow hoàn toàn tách rời trong source hiện tại.",
+        "Quên extraAttributes có durationMinutes/imagePath.",
+      ],
+      followUps: [
+        "Nếu durationMinutes không parse được thì source đang làm gì?",
+        "Auction mới tạo bắt đầu ở trạng thái nào trước scheduler chạy?",
+      ],
+    },
+    {
+      id: "place-bid-locking",
+      level: "Nâng cao",
+      topic: "BidService concurrency",
+      tags: ["Flow", "Design", "Debug", "Test", "Line code"],
+      filePath: "auction-server/src/main/java/com/auction/server/service/BidService.java",
+      patterns: ["computeIfAbsent", "lock.lock()", "AuctionScheduler.extendAuctionEnd", "eventManager.notifyNewBid"],
+      question: "Giải thích vì sao `BidService.placeBid()` là file quan trọng nhất khi nói về race condition trong dự án.",
+      intent: "Buộc người học mô tả fine-grained locking, validate state, anti-sniping và observer notification đúng thứ tự.",
+      answer: "BidService giữ một ReentrantLock riêng cho từng auction trong ConcurrentHashMap. Khi placeBid, service lấy lock theo auctionId để nhiều thread có thể bid song song trên các auction khác nhau nhưng không đè nhau trên cùng một auction. Bên trong critical section, nó kiểm tra auction còn RUNNING, dùng BidStrategy để tạo BidTransaction hợp lệ, cập nhật currentPrice/highestBidder, lưu bid và update auction. Nếu bid tới trong anti-sniping window thì scheduler sẽ extend endTime trước khi eventManager notifyNewBid phát realtime cho client.",
+      answerBullets: [
+        "Nói fine-grained lock theo auctionId, không phải lock toàn hệ thống.",
+        "Nói thứ tự validate -> create bid -> save/update -> anti-sniping -> notify observer.",
+        "Liên hệ trực tiếp với BidServiceConcurrencyTest.",
+      ],
+      mustMention: ["ReentrantLock", "ConcurrentHashMap", "AuctionScheduler.extendAuctionEnd", "notifyNewBid"],
+      commonMistakes: [
+        "Nói lock ở repository hoặc DataStore thay vì BidService.",
+        "Quên unlock ở finally là bắt buộc để tránh deadlock.",
+      ],
+      followUps: [
+        "Nếu bỏ lock thì lost update thể hiện ra sao trên currentPrice?",
+        "AutoBidService được kích hoạt ở bước nào sau một bid thành công?",
+      ],
+    },
+    {
+      id: "scheduler-lifecycle",
+      level: "Nâng cao",
+      topic: "AuctionScheduler và lifecycle",
+      tags: ["Flow", "Design", "Debug", "Test"],
+      filePath: "auction-server/src/main/java/com/auction/server/service/AuctionScheduler.java",
+      patterns: ["ScheduledExecutorService", "scheduleAuctionStart", "scheduleAuctionEndAt", "extendAuctionEnd"],
+      question: "AuctionScheduler đang giải quyết những trạng thái nào của auction và anti-sniping được cài ở đâu?",
+      intent: "Kiểm tra hiểu biết về lifecycle OPEN -> RUNNING -> FINISHED cùng reschedule khi có bid cuối phiên.",
+      answer: "AuctionScheduler giữ các ScheduledFuture để quản lý start/end task theo auctionId. Nó có thể start ngay nếu thời gian đã tới, hoặc schedule start/end theo delay. Khi BidService phát hiện bid đến trong 30 giây cuối, nó gọi extendAuctionEnd để hủy task cũ, cộng thêm endTime và reschedule task mới. Khi start hoặc finish thành công, scheduler cập nhật AuctionStatus và thông báo cho event manager để broadcast push ra client.",
+      answerBullets: [
+        "Nêu OPEN/RUNNING/FINISHED là lifecycle chính scheduler tác động.",
+        "Nêu anti-sniping nằm ở BidService gọi sang extendAuctionEnd của scheduler.",
+        "Nêu scheduler không chỉ đổi status mà còn phát event qua event manager.",
+      ],
+      mustMention: ["ScheduledExecutorService", "extendAuctionEnd", "AuctionStatus", "notifyAuctionEnded"],
+      commonMistakes: [
+        "Nói anti-sniping do client tự tính.",
+        "Quên scheduler cần cancel task cũ trước khi reschedule.",
+      ],
+      followUps: [
+        "Nếu endTime đã qua khi schedule thì source xử lý thế nào?",
+        "Test nào phù hợp để chứng minh scheduler đổi trạng thái đúng?",
+      ],
+    },
+    {
+      id: "observer-realtime",
+      level: "Nâng cao",
+      topic: "Observer và realtime push",
+      tags: ["Pattern", "Design", "Flow", "Debug"],
+      filePath: "auction-server/src/main/java/com/auction/server/observer/BroadcastObserver.java",
+      patterns: ["ServerPushMessage", "ClientRegistry.getInstance().broadcast", "onNewBid", "onAuctionEnded"],
+      question: "Dự án đang dùng Observer pattern như thế nào để đẩy realtime bid update lên client?",
+      intent: "Buộc người học tách publisher, observer và channel broadcast thay vì nói mơ hồ 'server push'.",
+      answer: "AuctionEventManager là publisher. BroadcastObserver là một observer subscribe vào manager để khi có bid mới hoặc đổi trạng thái, nó tạo ServerPushMessage rồi dùng ClientRegistry broadcast ra mọi client đang kết nối. AutoBidService cũng là observer khác trên cùng event stream, nhưng thay vì broadcast thì nó tự đặt giá. Mấu chốt là business state được cập nhật xong rồi mới phát event, nên client chỉ phản ánh trạng thái đã hợp lệ.",
+      answerBullets: [
+        "Nêu AuctionEventManager publish, BroadcastObserver subscribe.",
+        "Nêu ServerPushMessage là contract đi ra client.",
+        "Nêu AutoBidService cũng là observer khác trên cùng event stream.",
+      ],
+      mustMention: ["AuctionEventManager", "BroadcastObserver", "ServerPushMessage", "ClientRegistry"],
+      commonMistakes: [
+        "Gọi ClientRegistry là observer chính.",
+        "Không phân biệt observer broadcast với observer auto-bid.",
+      ],
+      followUps: [
+        "AuctionDetailController bắt push này ở đâu?",
+        "Vì sao notify phải chạy sau khi repository update xong?",
+      ],
+    },
+    {
+      id: "auction-detail-push",
+      level: "Trung bình",
+      topic: "AuctionDetailController và realtime UI",
+      tags: ["Flow", "Debug", "Line code"],
+      filePath: "auction-client/src/main/java/com/auction/client/controller/AuctionDetailController.java",
+      patterns: ["registerPushListener", "PushType.NEW_BID", "PushType.AUCTION_ENDED", "Platform.runLater"],
+      question: "Ở client, `AuctionDetailController` nhận và phản ứng với push message như thế nào?",
+      intent: "Kiểm tra hiểu luồng cuối cùng của realtime: từ server push về tới việc đổi label/disable input trên JavaFX thread.",
+      answer: "Controller đăng ký một PushListener với NetworkClient khi setData được gọi. Listener phân loại ServerPushMessage: nếu là NEW_BID và đúng auction đang xem thì cập nhật currentPrice và timeLabel; nếu là AUCTION_ENDED thì đổi thông báo và disable bidAmountField. Toàn bộ update UI chạy trong Platform.runLater để không vi phạm JavaFX thread rule. Khi rời màn, controller phải remove listener để tránh memory leak hoặc cập nhật sai màn đã đóng.",
+      answerBullets: [
+        "Nêu registerPushListener lúc setData.",
+        "Nêu lọc đúng currentAuction trước khi update UI.",
+        "Nêu remove listener khi goBack.",
+      ],
+      mustMention: ["PushListener", "ServerPushMessage", "Platform.runLater", "removePushListener"],
+      commonMistakes: [
+        "Update UI trực tiếp từ thread mạng.",
+        "Quên unregister listener khi chuyển màn.",
+      ],
+      followUps: [
+        "Nếu push của auction khác đến thì source đang làm gì?",
+        "Place bid thành công từ chính user này có đi qua push không, hay chỉ qua ClientResponse?",
+      ],
+    },
+    {
+      id: "datastore-serialization",
+      level: "Trung bình",
+      topic: "DataStore và Java Serialization",
+      tags: ["Design", "Flow", "Debug", "Test"],
+      filePath: "auction-server/src/main/java/com/auction/server/datastore/DataStore.java",
+      patterns: ["FILE_PATH", "loadData", "saveData", "ensureDefaultAdminAccount"],
+      question: "Vì sao `DataStore` là điểm phải mở khi bị hỏi hệ thống lưu dữ liệu ở đâu và restart server có mất dữ liệu không?",
+      intent: "Buộc người học chỉ ra snapshot file `.dat`, in-memory singleton và bootstrap admin mặc định.",
+      answer: "DataStore là singleton giữ bốn danh sách chính: users, items, auctions và bidTransactions. Khi server load, nó đọc snapshot từ `data/auction_data.dat`; khi save, nó serialise toàn bộ DataStore xuống file này. Nếu file chưa tồn tại, store tạo thư mục data và seed admin mặc định. Vì vậy dữ liệu runtime không nằm ở SQL hay REST backend khác mà nằm trong in-memory lists có cơ chế save/load bằng serialization.",
+      answerBullets: [
+        "Nêu file `data/auction_data.dat` là nơi snapshot được ghi.",
+        "Nêu DataStore là singleton trong RAM rồi persist xuống file.",
+        "Nêu ensureDefaultAdminAccount bootstrap admin mặc định.",
+      ],
+      mustMention: ["DataStore", "auction_data.dat", "loadData", "saveData"],
+      commonMistakes: [
+        "Nói dự án đang dùng database SQL.",
+        "Quên admin mặc định được tạo ở DataStore nếu chưa có.",
+      ],
+      followUps: [
+        "Repository nào đang đọc/ghi qua DataStore?",
+        "Nếu file data hỏng thì startup sẽ biểu hiện thế nào?",
+      ],
+    },
+    {
+      id: "maven-multimodule",
+      level: "Cơ bản",
+      topic: "Maven multi-module",
+      tags: ["Design", "Build", "Test"],
+      filePath: "pom.xml",
+      patterns: ["<modules>", "auction-common", "auction-server", "auction-client"],
+      question: "Maven multi-module của dự án giúp gì cho việc tách `auction-common`, `auction-server`, `auction-client`?",
+      intent: "Kiểm tra hiểu cấu trúc build và lý do common module tồn tại.",
+      answer: "Parent POM ở root ghép ba module chính bằng reactor. `auction-common` chứa entity/message/enum/pattern dùng chung để client và server cùng compile với một source of truth. `auction-server` và `auction-client` phụ thuộc vào common nhưng mỗi bên vẫn giữ trách nhiệm riêng. Nhờ multi-module, lệnh build ở root có thể compile/test đồng bộ, giảm nguy cơ contract lệch giữa hai phía.",
+      answerBullets: [
+        "Nêu parent POM + reactor modules.",
+        "Nêu common là source of truth cho shared contract/domain.",
+        "Nêu build ở root giúp bắt sai lệch compile giữa các module.",
+      ],
+      mustMention: ["pom.xml", "auction-common", "auction-server", "auction-client"],
+      commonMistakes: [
+        "Coi common chỉ là thư mục tiện tay copy class.",
+        "Không liên hệ multi-module với việc giữ contract đồng bộ.",
+      ],
+      followUps: [
+        "Nếu sửa field trong common message thì module nào sẽ fail compile trước?",
+        "Lệnh Maven nào repo README khuyến nghị để build toàn dự án?",
+      ],
+    },
+    {
+      id: "tests-proof",
+      level: "Trung bình",
+      topic: "Test như bằng chứng bảo vệ flow",
+      tags: ["Test", "Debug", "Design"],
+      filePath: "auction-server/src/test/java/com/auction/server/service/BidServiceConcurrencyTest.java",
+      patterns: ["@Test", "BidServiceConcurrencyTest", "placeBid"],
+      question: "Vì sao `BidServiceConcurrencyTest` là bằng chứng tốt hơn demo miệng khi nói race condition đã được xử lý?",
+      intent: "Đẩy người học về mindset dùng test làm bằng chứng thay vì chỉ mô tả logic lock.",
+      answer: "Demo tay chỉ cho thấy một lần chạy thuận lợi, còn concurrency bug dễ ẩn trong timing. BidServiceConcurrencyTest tạo tình huống nhiều luồng bid vào cùng auction để chứng minh lock theo auctionId và validate currentPrice hoạt động đúng. Khi vấn đáp, tốt nhất là nói logic trong BidService trước rồi chỉ test này như bằng chứng rằng lost update hoặc invalid interleaving đã được kiểm soát bằng code thực thi được.",
+      answerBullets: [
+        "Nói test tái hiện race condition có kiểm soát tốt hơn demo cảm tính.",
+        "Liên hệ trực tiếp với lock theo auctionId trong BidService.",
+        "Dùng test để chứng minh behavior chứ không chỉ nêu ý tưởng.",
+      ],
+      mustMention: ["BidServiceConcurrencyTest", "BidService", "lock theo auctionId"],
+      commonMistakes: [
+        "Đọc tên test mà không nói Arrange-Act-Assert.",
+        "Không nối test về invariant cụ thể mà nó bảo vệ.",
+      ],
+      followUps: [
+        "Ngoài concurrency test, test nào chứng minh auto-bid hoặc scheduler hoạt động?",
+        "Nếu test fail ngắt quãng theo timing thì sẽ debug từ đâu?",
+      ],
+    },
+    {
+      id: "e2e-proof",
+      level: "Trung bình",
+      topic: "AuctionE2ETest",
+      tags: ["Test", "Flow", "Debug"],
+      filePath: "auction-server/src/test/java/com/auction/server/e2e/AuctionE2ETest.java",
+      patterns: ["@Test", "AuctionE2ETest", "ClientHandler"],
+      question: "Khi muốn chứng minh flow lớn của hệ thống không chỉ đúng ở từng service đơn lẻ, em sẽ viện dẫn `AuctionE2ETest` như thế nào?",
+      intent: "Khuyến khích dùng end-to-end test như bằng chứng luồng liên module/server-contract.",
+      answer: "E2E test có giá trị vì nó đi qua nhiều lớp hơn unit test: request contract, handler dispatch, service và repository/datastore. Khi nói về một flow lớn như login, create item hay place bid, em có thể dùng AuctionE2ETest để chứng minh các lớp đã nối với nhau đúng cách thay vì chỉ đúng từng method cục bộ. Quan trọng là đọc test theo luồng đầu vào, hành động và trạng thái đầu ra mà test xác nhận.",
+      answerBullets: [
+        "Nêu E2E test chứng minh integration chứ không chỉ unit behavior.",
+        "Đọc theo flow vào -> handler/service -> output/assert.",
+        "Dùng nó như bằng chứng sau khi đã giải thích code chính.",
+      ],
+      mustMention: ["AuctionE2ETest", "integration", "request/handler/service"],
+      commonMistakes: [
+        "Nhầm E2E với UI manual test.",
+        "Không chỉ ra lớp nào được test nối với nhau.",
+      ],
+      followUps: [
+        "Nếu E2E pass nhưng UI vẫn lỗi thì thường lỗi ở lớp nào?",
+        "Test này khác gì manual case sinh từ FXML?",
+      ],
+    },
+  ];
+
+  for (const spec of questionSpecs) {
+    const file = fileMap.get(spec.filePath);
+    questions.push({
+      id: spec.id,
+      level: spec.level,
+      topic: spec.topic,
+      question: spec.question,
+      answer: spec.answer,
+      intent: spec.intent,
+      answerBullets: spec.answerBullets,
+      mustMention: spec.mustMention,
+      commonMistakes: spec.commonMistakes,
+      tags: spec.tags,
+      filePath: spec.filePath,
+      lineRefs: findLineRefs(file, spec.patterns, 4),
+      followUps: spec.followUps,
+    });
+  }
+
+  const genericSeeds = [
+    { path: "auction-common/src/main/java/com/auction/common/message/ServerPushMessage.java", topic: "ServerPushMessage và push contract", tags: ["Flow", "Design", "Line code"] },
+    { path: "auction-common/src/main/java/com/auction/common/strategy/AutoBidStrategy.java", topic: "AutoBidStrategy", tags: ["Pattern", "Design", "Line code"] },
+    { path: "auction-common/src/main/java/com/auction/common/strategy/ManualBidStrategy.java", topic: "ManualBidStrategy", tags: ["Pattern", "Design", "Line code"] },
+    { path: "auction-common/src/main/java/com/auction/common/factory/ItemFactory.java", topic: "ItemFactory", tags: ["Pattern", "Design", "Line code"] },
+    { path: "auction-server/src/main/java/com/auction/server/observer/AuctionEventManager.java", topic: "AuctionEventManager", tags: ["Pattern", "Design", "Line code"] },
+    { path: "auction-server/src/main/java/com/auction/server/repository/SerializableAuctionRepository.java", topic: "SerializableAuctionRepository", tags: ["Design", "Line code", "Debug"] },
+    { path: "auction-server/src/main/java/com/auction/server/repository/SerializableBidRepository.java", topic: "SerializableBidRepository", tags: ["Design", "Line code", "Debug"] },
+    { path: "auction-server/src/main/java/com/auction/server/repository/SerializableUserRepository.java", topic: "SerializableUserRepository", tags: ["Design", "Line code", "Debug"] },
+    { path: "auction-client/src/main/java/com/auction/client/controller/CreateItemController.java", topic: "CreateItemController", tags: ["Flow", "Debug", "Line code"] },
+    { path: "auction-client/src/main/java/com/auction/client/controller/AuctionDetailController.java", topic: "AuctionDetailController", tags: ["Flow", "Debug", "Line code"] },
+    { path: "auction-client/src/main/java/com/auction/client/controller/AuctionListController.java", topic: "AuctionListController", tags: ["Flow", "Debug", "Line code"] },
+    { path: "auction-client/src/main/resources/view/login.fxml", topic: "login.fxml", tags: ["Line code", "Flow"] },
+    { path: "auction-client/src/main/resources/view/register.fxml", topic: "register.fxml", tags: ["Line code", "Flow"] },
+    { path: "auction-client/src/main/resources/view/auction_detail.fxml", topic: "auction_detail.fxml", tags: ["Line code", "Flow"] },
+    { path: "auction-server/src/test/java/com/auction/server/service/UserServiceTest.java", topic: "UserServiceTest", tags: ["Test", "Line code"] },
+    { path: "auction-server/src/test/java/com/auction/server/service/ItemServiceTest.java", topic: "ItemServiceTest", tags: ["Test", "Line code"] },
+    { path: "auction-server/src/test/java/com/auction/server/service/AuctionServiceTest.java", topic: "AuctionServiceTest", tags: ["Test", "Line code"] },
+    { path: "auction-server/src/test/java/com/auction/server/service/AuctionSchedulerTest.java", topic: "AuctionSchedulerTest", tags: ["Test", "Line code"] },
+    { path: "auction-server/src/test/java/com/auction/server/observer/BroadcastObserverTest.java", topic: "BroadcastObserverTest", tags: ["Test", "Line code"] },
+    { path: "docs/Project_Architecture_Deep_Dive.md", topic: "Project_Architecture_Deep_Dive", tags: ["Design", "Debug", "Line code"] },
+    { path: "docs/USER_AUTH_CONTRACT.md", topic: "USER_AUTH_CONTRACT", tags: ["Flow", "Design", "Test"] },
+  ];
+
+  for (const seed of genericSeeds) {
+    const file = fileMap.get(seed.path);
+    if (!file) continue;
+    const refs = file.importantLines.slice(0, 3);
+    refs.forEach((ref, index) => {
+      questions.push({
+        id: `${seed.topic.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-line-${index + 1}`,
+        level: file.layer === "Test" ? "Trung bình" : "Nâng cao",
+        topic: seed.topic,
+        question: `Mở ${seed.topic} và giải thích vì sao dòng \`${ref.code}\` là điểm neo quan trọng khi nói về ${seed.topic}.`,
+        answer: `${file.summary} Dòng \`${ref.code}\` cho thấy phần quan trọng nhất của file này: ${ref.explain} Khi trả lời, hãy nói vai trò file trước, sau đó chỉ dòng này để chứng minh code thật rồi nối sang flow hoặc test liên quan.`,
+        intent: `Luyện thói quen bám line code thật trong ${seed.topic}, không trả lời kiểu mô tả chung chung.`,
+        answerBullets: [
+          `Nêu vai trò file: ${file.summary}`,
+          `Chỉ thẳng dòng L${ref.line}: ${ref.code}`,
+          "Nối dòng đó sang flow, contract hoặc test đang được bảo vệ.",
+        ],
+        mustMention: unique([seed.topic, file.layer, path.basename(file.path)]),
+        commonMistakes: [
+          "Đọc nguyên câu comment hoặc code mà không nói tác dụng trong flow.",
+          "Chỉ nói file này quan trọng nhưng không nối sang lớp kế tiếp.",
+        ],
+        tags: unique([...seed.tags, file.layer === "Test" ? "Test" : "Line code"]),
+        filePath: file.path,
+        lineRefs: [
+          {
+            line: ref.line,
+            code: ref.code,
+            explain: ref.explain,
+          },
+        ],
+        followUps: [
+          "Nếu bỏ hoặc sửa sai dòng này thì flow nào gãy đầu tiên?",
+          "File nào gọi hoặc phụ thuộc trực tiếp vào điểm neo này?",
+        ],
+      });
+    });
+  }
+
+  return questions
+    .filter((question) => question.lineRefs.length > 0)
+    .sort((a, b) => a.id.localeCompare(b.id));
 }
 
-const payload = `/* Auto-generated by scripts/generate-learning-data.mjs from ${repoRoot}. */
+function main() {
+  const files = walk(repoRoot).sort((left, right) => rel(left).localeCompare(rel(right)));
+  const allFiles = walkAll(repoRoot);
+
+  const projectCodeFiles = files.map((fullPath) => {
+    const relativePath = rel(fullPath);
+    const layer = layerFor(relativePath);
+    const module = moduleFor(relativePath);
+    const extension = path.extname(relativePath).toLowerCase() || path.basename(relativePath);
+    const raw = readFileSync(fullPath, "utf8");
+    const lines = raw.split(/\r?\n/);
+    const { declarations, methods, importantLines: javaImportant } = parseJava(lines);
+    const fxml = relativePath.endsWith(".fxml") ? parseFXML(lines) : null;
+    const importantSource = fxml ? fxml.importantLines : javaImportant;
+    const importantLines = importantSource.slice(0, 10).map((entry) => ({
+      line: entry.line,
+      code: entry.code,
+      explain: lineExplain(entry.code, layer),
+    }));
+
+    return {
+      path: relativePath,
+      layer,
+      module,
+      extension,
+      lineCount: lines.length,
+      summary: summaryFor(relativePath, layer, lines),
+      declarations: declarations.slice(0, 8),
+      methods: methods.slice(0, 12),
+      importantLines,
+      fxml: fxml
+        ? {
+            controller: fxml.controller,
+            controllerLine: fxml.controllerLine,
+            actions: fxml.actions.slice(0, 12),
+          }
+        : null,
+    };
+  });
+
+  const generatedManualCases = buildManualCases(projectCodeFiles);
+  const generatedInterviewQuestions = buildQuestionBank(projectCodeFiles);
+  const assetDocumentFiles = allFiles
+    .map((fullPath) => rel(fullPath))
+    .filter((relativePath) => /\.(svg|png|jpg|jpeg|gif|pdf|pptx|docx)$/i.test(relativePath))
+    .slice(0, 40);
+
+  const requiredDocs = ["README.md", "DESIGN.md", "docs/Project_Architecture_Deep_Dive.md", "docs/USER_AUTH_CONTRACT.md", "docs/RUN_SERVER_LOCAL.md"];
+  const presentFiles = new Set(projectCodeFiles.map((file) => file.path));
+  const missingTextFiles = requiredDocs.filter((file) => !presentFiles.has(file));
+
+  const projectAudit = {
+    projectLabel,
+    totalFilesScanned: allFiles.length,
+    codeMapFiles: projectCodeFiles.length,
+    textFilesInInventory: files.length,
+    assetDocumentFiles,
+    intentionallyNotCodeMapped: [
+      ".worktrees/**",
+      ".venv/**",
+      "target/**",
+      "node_modules/**",
+      "data/**",
+    ],
+    missingTextFiles,
+    excludedDirectories: [...excludedDirs].sort(),
+    includedExtensions: [...includedExtensions].sort(),
+    note: "Generated for public web consumption. Paths are repository-relative only; no absolute local path is emitted.",
+  };
+
+  const payload = `/* Auto-generated by scripts/generate-learning-data.mjs for ${projectLabel}. */
 export type GeneratedLineRef = { line: number; code: string; explain: string; path?: string };
 export type GeneratedCodeFile = {
   path: string;
-  absolutePath: string;
   layer: string;
   module: string;
   extension: string;
@@ -1283,7 +1121,7 @@ export type GeneratedCodeFile = {
   declarations: { line: number; kind: string; name: string; code: string }[];
   methods: { line: number; name: string; code: string }[];
   importantLines: GeneratedLineRef[];
-  fxml: null | { controller: string; controllerLine: number | null; actions: { action: string; line: number; code: string }[] };
+  fxml: null | { controller: string | null; controllerLine: number | null; actions: { action: string; line: number; code: string }[] };
 };
 export type GeneratedManualCase = {
   id: string;
@@ -1292,10 +1130,25 @@ export type GeneratedManualCase = {
   role: string;
   steps: string[];
   expected: string;
-  executionPath: GeneratedLineRef[] & { path?: string }[];
+  executionPath: GeneratedLineRef[];
+};
+export type GeneratedInterviewQuestion = {
+  id: string;
+  level: string;
+  topic: string;
+  question: string;
+  answer: string;
+  intent: string;
+  answerBullets: string[];
+  mustMention: string[];
+  commonMistakes: string[];
+  tags: string[];
+  filePath: string;
+  lineRefs: GeneratedLineRef[];
+  followUps: string[];
 };
 export type ProjectAudit = {
-  repoRoot: string;
+  projectLabel: string;
   totalFilesScanned: number;
   codeMapFiles: number;
   textFilesInInventory: number;
@@ -1308,31 +1161,22 @@ export type ProjectAudit = {
 };
 
 export const generatedAt = ${JSON.stringify(new Date().toISOString())};
-export const projectCodeFiles: GeneratedCodeFile[] = ${JSON.stringify(codeFiles, null, 2)};
-export const generatedManualCases: GeneratedManualCase[] = ${JSON.stringify(manualCases, null, 2)};
+export const projectLabel = ${JSON.stringify(projectLabel)};
+export const projectCodeFiles: GeneratedCodeFile[] = ${JSON.stringify(projectCodeFiles, null, 2)};
+export const generatedManualCases: GeneratedManualCase[] = ${JSON.stringify(generatedManualCases, null, 2)};
+export const generatedInterviewQuestions: GeneratedInterviewQuestion[] = ${JSON.stringify(generatedInterviewQuestions, null, 2)};
 export const projectAudit: ProjectAudit = ${JSON.stringify(projectAudit, null, 2)};
 `;
 
-if (!existsSync(path.dirname(outFile))) mkdirSync(path.dirname(outFile), { recursive: true });
-writeFileSync(outFile, payload, "utf8");
+  mkdirSync(path.dirname(outFile), { recursive: true });
+  writeFileSync(outFile, payload, "utf8");
 
-console.log(
-  JSON.stringify(
-    {
-      outFile,
-      files: codeFiles.length,
-      interviewQuestions: "src/curatedInterviewQuestions.ts",
-      manualCases: manualCases.length,
-      audit: {
-        totalFilesScanned: projectAudit.totalFilesScanned,
-        codeMapFiles: projectAudit.codeMapFiles,
-        textFilesInInventory: projectAudit.textFilesInInventory,
-        missingTextFiles: projectAudit.missingTextFiles.length,
-        assetDocumentFiles: projectAudit.assetDocumentFiles.length,
-        intentionallyNotCodeMapped: projectAudit.intentionallyNotCodeMapped.length,
-      },
-    },
-    null,
-    2,
-  ),
-);
+  console.log(`Generated learning data for ${projectLabel}`);
+  console.log(`- repoRoot: ${repoRoot}`);
+  console.log(`- code map files: ${projectCodeFiles.length}`);
+  console.log(`- manual cases: ${generatedManualCases.length}`);
+  console.log(`- interview questions: ${generatedInterviewQuestions.length}`);
+  console.log(`- output: ${outFile}`);
+}
+
+main();
