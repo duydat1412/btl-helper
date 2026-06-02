@@ -11,6 +11,7 @@ import {
   FileCode2,
   GitBranch,
   GraduationCap,
+  Info,
   Layers3,
   Lock,
   Moon,
@@ -79,6 +80,7 @@ const nav = [
   { key: "theory", label: "Theory library", icon: BookOpen, href: "/theory" },
   { key: "tests", label: "Test lab", icon: ClipboardCheck, href: "/test-lab" },
   { key: "interview", label: "Vấn đáp", icon: Sparkles, href: "/interview" },
+  { key: "about", label: "About", icon: Info, href: "/about" },
 ] satisfies { key: PageKey; label: string; icon: typeof GraduationCap; href: string }[];
 
 const routeByPage = Object.fromEntries(nav.map((item) => [item.key, item.href])) as Record<PageKey, string>;
@@ -272,6 +274,7 @@ export default function LearningApp({ page }: { page: PageKey }) {
             questions={curatedInterviewQuestions}
           />
         )}
+        {page === "about" && <About />}
       </main>
     </div>
   );
@@ -1829,6 +1832,112 @@ function Interview({
           </p>
         </div>
       </div>
+    </section>
+  );
+}
+
+function About() {
+  const contributors = [
+    {
+      role: "Current maintainer",
+      name: "duydat1412",
+      note: "Đang duy trì bản deploy hiện tại, chuyển nội dung sang repo BTL Auction System và tiếp tục chỉnh UI/flow học tập.",
+    },
+    {
+      role: "Fork base",
+      name: "Cé Con",
+      note: "Tác giả phần khung app học tập ban đầu và source gốc mà repo hiện tại fork lại để tái sử dụng.",
+    },
+  ];
+
+  const techStack = [
+    "Next.js 15",
+    "React 19",
+    "TypeScript",
+    "SCSS",
+    "Bun",
+    "Vercel",
+    "Recharts",
+    "Lucide React",
+    "Playwright CLI",
+    "Node.js data generator",
+  ];
+
+  const architecture = [
+    "App Router với mỗi tab là một route riêng như `/visualize`, `/code-map`, `/interview`.",
+    "Dữ liệu học tập được commit sẵn thành `src/data.ts`, `src/generatedProjectData.ts` và question bank tĩnh.",
+    "Script `scripts/generate-learning-data.mjs` dùng để regenerate code map, manual case và interview seed từ repo nguồn local.",
+    "Deploy target là GitHub -> Vercel, không phụ thuộc vào `D:\\BTL` ở runtime.",
+  ];
+
+  return (
+    <section className="page-stack">
+      <SectionHeader
+        eyebrow="About"
+        title="Tác giả, nguồn fork và stack của web này"
+        text={`Trang này ghi rõ ai đang maintain, repo gốc được fork từ đâu, và các công nghệ chính đang dùng để build ${projectLabel}.`}
+      />
+
+      <div className="grid two">
+        {contributors.map((person) => (
+          <article key={person.role} className="panel">
+            <div className="panel-title">
+              <h3>{person.name}</h3>
+              <span>{person.role}</span>
+            </div>
+            <div className="example-box">
+              <strong>Vai trò</strong>
+              <span>{person.note}</span>
+            </div>
+          </article>
+        ))}
+      </div>
+
+      <div className="grid two">
+        <article className="panel">
+          <div className="panel-title">
+            <h3>Tech stack</h3>
+            <span>frontend + tooling</span>
+          </div>
+          <div className="tag-cloud">
+            {techStack.map((item) => (
+              <code key={item}>{item}</code>
+            ))}
+          </div>
+        </article>
+
+        <article className="panel">
+          <div className="panel-title">
+            <h3>Build and deploy</h3>
+            <span>nguồn dữ liệu và pipeline</span>
+          </div>
+          <ul className="clean-list">
+            {architecture.map((item) => (
+              <li key={item}>
+                <CheckCircle2 size={16} aria-hidden />
+                <span>{item}</span>
+              </li>
+            ))}
+          </ul>
+        </article>
+      </div>
+
+      <article className="panel">
+        <div className="panel-title">
+          <h3>Project identity</h3>
+          <span>nhãn public của bản deploy</span>
+        </div>
+        <div className="file-meta">
+          <div>
+            <span>Project label</span>
+            <code>{projectLabel}</code>
+          </div>
+          <div>
+            <span>Main sections</span>
+            <code>Dashboard, Roles, Visualize, Code map, Theory, Tests, Interview, About</code>
+          </div>
+        </div>
+      </article>
     </section>
   );
 }

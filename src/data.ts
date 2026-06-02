@@ -1,6 +1,6 @@
 import { projectCodeFiles, projectLabel } from "./generatedProjectData";
 
-export type PageKey = "dashboard" | "roles" | "flows" | "code" | "theory" | "tests" | "interview";
+export type PageKey = "dashboard" | "roles" | "flows" | "code" | "theory" | "tests" | "interview" | "about";
 export type RoleKey = "Bidder" | "Seller" | "Admin";
 export type StudyStatus = "done" | "review" | "risk";
 
