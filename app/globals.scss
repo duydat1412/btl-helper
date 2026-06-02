@@ -272,8 +272,6 @@ pre {
 
 .main-content {
   min-width: 0;
-  max-width: 100vw;
-  overflow-x: clip;
   padding: 28px;
 }
 
@@ -582,6 +580,28 @@ pre {
 
 .grid.two {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.page-stack > *,
+.grid > *,
+.hero-grid > *,
+.role-grid > *,
+.journey > *,
+.scenario-steps > *,
+.scenario-learning-grid > *,
+.flow-detail-grid > *,
+.step-study-columns > *,
+.visual-coverage-grid > *,
+.manual-grid > *,
+.generated-manual-grid > *,
+.theory-grid > *,
+.interview-layout > *,
+.rubric-grid > *,
+.answer-rubric > *,
+.file-study-guide > *,
+.file-study-checklist > *,
+.file-meta > * {
+  min-width: 0;
 }
 
 .role-grid {
